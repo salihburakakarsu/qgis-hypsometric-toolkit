@@ -136,7 +136,8 @@ def main():
 
     sys.path.insert(0, REPO_ROOT)
     sys.path.insert(0, os.path.join(REPO_ROOT, "dev"))
-    from hypsometric_toolkit.core import analysis, plotting, qgis_runner
+    from hypsometric_toolkit.core import (analysis, drawing, plotting,
+                                          qgis_runner)
     import make_test_data
 
     check = Checker()
@@ -244,6 +245,51 @@ def main():
     check.ok("nothing plottable returns None",
              plotting.plot_curves([], os.path.join(OUTPUT_DIR, "empty.png")) is None)
 
+    # -------------------------------------------------------- drawn polygons
+    check.section("Drawn boundary polygons")
+    from qgis.core import (QgsCoordinateReferenceSystem, QgsFeature,
+                           QgsGeometry, QgsPointXY, QgsProject)
+
+    def square(cx, cy, half):
+        return QgsGeometry.fromPolygonXY([[
+            QgsPointXY(cx - half, cy - half), QgsPointXY(cx + half, cy - half),
+            QgsPointXY(cx + half, cy + half), QgsPointXY(cx - half, cy + half),
+        ]])
+
+    drawn = drawing.create_scratch_polygon_layer(
+        QgsCoordinateReferenceSystem("EPSG:32719"), "Drawn_boundary")
+    check.ok("the scratch polygon layer is valid", drawn.isValid())
+    check.ok("the scratch layer carries the requested CRS",
+             drawn.crs().authid() == "EPSG:32719", drawn.crs().authid())
+    check.ok("the scratch layer starts empty", drawn.featureCount() == 0)
+    check.ok("a digitized polygon is added",
+             drawing.add_polygon(drawn, square(500750, 7302250, 500)) == 1)
+
+    # Redrawing keeps the feature count and the layer source identical, so the
+    # cache key has to notice the geometry itself changed.
+    hash_before = qgis_runner.compute_params_hash(dem, drawn, False, STEP, False)
+    drawing.clear_polygons(drawn)
+    check.ok("clear_polygons empties the layer", drawn.featureCount() == 0)
+    drawing.add_polygon(drawn, square(500750, 7302250, 400))
+    hash_after = qgis_runner.compute_params_hash(dem, drawn, False, STEP, False)
+    check.ok("redrawing a polygon changes the cache key",
+             hash_before != hash_after)
+
+    drawn_dir = os.path.join(OUTPUT_DIR, "drawn")
+    os.makedirs(drawn_dir, exist_ok=True)
+    qgis_runner.run_algorithm(
+        qgis_runner.build_params(dem, drawn, False, STEP, False, drawn_dir))
+    drawn_csvs = qgis_runner.list_output_csvs(drawn_dir)
+    check.ok("the algorithm runs on a drawn in-memory polygon",
+             len(drawn_csvs) == 1, f"got {len(drawn_csvs)}")
+    if drawn_csvs:
+        check.ok("the output is named after the drawn layer",
+                 "Drawn_boundary" in os.path.basename(drawn_csvs[0]),
+                 os.path.basename(drawn_csvs[0]))
+        drawn_hi = analysis.analyze_csv(drawn_csvs[0])["hypsometric_integral_curve"]
+        check.ok("the drawn polygon yields a usable HI",
+                 drawn_hi is not None and 0.0 < drawn_hi < 1.0, f"got {drawn_hi}")
+
     # --------------------------------------------------------- cache cleaning
     check.section("Cache cleaning")
     fake_cache = os.path.join(OUTPUT_DIR, "profile", "hypsometric_toolkit", "cache")
@@ -284,12 +330,25 @@ def main():
 
     # --------------------------------------------------------------- dialog
     check.section("Dialog")
+    from qgis.gui import (QgsAdvancedDigitizingDockWidget, QgsMapCanvas,
+                          QgsMapToolPan)
+
     from hypsometric_toolkit import classFactory
     from hypsometric_toolkit.dialog import HypsometricDialog
+
+    canvas = QgsMapCanvas()
+    canvas.setDestinationCrs(QgsCoordinateReferenceSystem("EPSG:32719"))
+    cad = QgsAdvancedDigitizingDockWidget(canvas)
 
     class FakeIface:
         def mainWindow(self):
             return None
+
+        def mapCanvas(self):
+            return canvas
+
+        def cadDockWidget(self):
+            return cad
 
     plugin = classFactory(FakeIface())
     check.ok("classFactory returns the plugin object",
@@ -317,6 +376,43 @@ def main():
     check.ok("cleaning clears the post-processing command and the log",
              dlg.cmd_edit.text() == "" and dlg.log_edit.toPlainText() == "")
     check.ok("cleaning forgets the output folder", dlg._output_dir is None)
+
+    # --------------------------------------------------- draw polygon button
+    check.section("Draw polygon button")
+    QgsProject.instance().setCrs(QgsCoordinateReferenceSystem("EPSG:32719"))
+    check.ok("the button starts untoggled",
+             not dlg.draw_btn.isChecked()
+             and dlg.draw_btn.text() == "Draw polygon")
+
+    dlg.draw_btn.setChecked(True)
+    check.ok("toggling it starts a digitizing tool", dlg._draw_tool is not None)
+    check.ok("the digitizing tool becomes the canvas map tool",
+             canvas.mapTool() is dlg._draw_tool)
+    check.ok("the button label switches to 'Stop drawing'",
+             dlg.draw_btn.text() == "Stop drawing")
+    check.ok("a scratch layer is created and added to the project",
+             dlg._drawn_layer is not None
+             and QgsProject.instance().mapLayer(dlg._drawn_layer.id()) is not None)
+    check.ok("the drawn layer is selected as the boundary layer",
+             dlg.boundary_combo.currentLayer() is dlg._drawn_layer)
+
+    digitized = QgsFeature()
+    digitized.setGeometry(square(500750, 7302250, 500))
+    dlg._on_polygon_digitized(digitized)
+    dlg._on_polygon_digitized(digitized)
+    check.ok("digitized polygons accumulate in the drawn layer",
+             dlg._drawn_layer.featureCount() == 2,
+             f"got {dlg._drawn_layer.featureCount()}")
+
+    canvas.setMapTool(QgsMapToolPan(canvas))
+    check.ok("switching map tools in QGIS untoggles the button",
+             not dlg.draw_btn.isChecked() and dlg._draw_tool is None)
+
+    dlg.draw_btn.setChecked(True)
+    check.ok("restarting drawing reuses the existing layer",
+             dlg._drawn_layer.featureCount() == 2)
+    dlg._stop_drawing()
+    check.ok("stopping drawing releases the map tool", dlg._draw_tool is None)
 
     status = check.finish()
     print(f"Outputs left in: {OUTPUT_DIR}")

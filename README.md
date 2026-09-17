@@ -75,7 +75,7 @@ Hypsometric Analysis Toolkit*.
 ## Use
 
 1. Load a DEM raster and a polygon layer (watersheds, craters, basins, …) into
-   your project.
+   your project — or skip the polygon layer and draw one, see below.
 2. Open the plugin: **Raster menu → Hypsometric Analysis Toolkit**, or the
    toolbar button.
 3. Pick the DEM and polygon layers, set the **elevation step** (vertical bin
@@ -88,6 +88,21 @@ Hypsometric Analysis Toolkit*.
 The *Log* tab carries the algorithm's own messages — check it if a polygon
 produced no output (usually it does not intersect the DEM, or it falls entirely
 in NODATA).
+
+### Drawing an area of interest
+
+**Draw polygon**, next to the boundary layer chooser, skips preparing a
+boundary layer. It creates a temporary polygon layer called `Drawn_boundary`,
+selects it as the boundary, and hands the map canvas a digitizing tool: click
+vertices on the map, right-click to close the polygon. Draw as many as you
+like — each one becomes a feature and gets its own curve — then click **Stop
+drawing** and run the analysis. The button untoggles itself if you switch to
+another QGIS map tool.
+
+The layer is an in-memory scratch layer, so nothing is written to disk. To keep
+it, use *Layer ▸ Make Permanent* or export it as a shapefile / GeoPackage like
+any other layer. It is drawn in the project CRS; the algorithm reprojects it to
+the DEM's CRS on its own.
 
 **Clean…** starts over: it clears the results, plot and log, and deletes the
 cached runs held in the QGIS profile. It asks for confirmation before deleting
@@ -127,6 +142,7 @@ hypsometric_toolkit/       the plugin itself
 └── core/
     ├── analysis.py        HI math, CSV reading, summary writing (numpy only)
     ├── qgis_runner.py     Processing wrapper + run cache
+    ├── drawing.py         scratch polygon layer for the Draw polygon tool
     └── plotting.py        matplotlib and Qt plot renderers
 build_zip.sh               packages the plugin for "Install from ZIP"
 dev/make_test_data.py      generates a synthetic DEM + boundary polygons

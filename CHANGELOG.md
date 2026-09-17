@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.3.0
+
+- Added a **Draw polygon** button next to the boundary layer chooser. It
+  creates a temporary polygon layer and hands the map canvas a digitizing tool,
+  so an area of interest can be drawn and analyzed without preparing a
+  shapefile first. Polygons accumulate in the layer, and the button untoggles
+  itself when QGIS switches to another map tool.
+- The run cache key now includes a digest of the boundary geometries, so
+  redrawing a polygon no longer returns the previous polygon's cached results.
+
 ## 1.2.0
 
 - Added a **Clean…** button. It clears the results table, the curves plot and

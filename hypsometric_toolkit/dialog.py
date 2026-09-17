@@ -29,10 +29,10 @@ from qgis.PyQt.QtWidgets import (
     QTabWidget,
     QVBoxLayout,
 )
-from qgis.core import QgsMapLayerProxyModel, QgsProcessingFeedback
+from qgis.core import QgsMapLayerProxyModel, QgsProcessingFeedback, QgsProject
 from qgis.gui import QgsFileWidget, QgsMapLayerComboBox
 
-from .core import analysis, plotting, qgis_runner
+from .core import analysis, drawing, plotting, qgis_runner
 
 RESULT_COLUMNS = [
     ("feature_id", "Feature"),
@@ -74,6 +74,9 @@ class HypsometricDialog(QDialog):
         self._results = []
         self._output_dir = None
         self._plot_path = None
+        self._draw_tool = None
+        self._drawn_layer = None
+        self._map_tool_watched = False
 
         self._build_ui()
 
@@ -92,7 +95,17 @@ class HypsometricDialog(QDialog):
 
         self.boundary_combo = QgsMapLayerComboBox()
         self.boundary_combo.setFilters(QgsMapLayerProxyModel.PolygonLayer)
-        form.addRow("Boundary polygons:", self.boundary_combo)
+        self.draw_btn = QPushButton("Draw polygon")
+        self.draw_btn.setCheckable(True)
+        self.draw_btn.setToolTip(
+            "Digitize an area of interest straight onto the map canvas, into a "
+            "temporary polygon layer that is then used as the boundary"
+        )
+        self.draw_btn.toggled.connect(self._on_draw_toggled)
+        boundary_row = QHBoxLayout()
+        boundary_row.addWidget(self.boundary_combo, 1)
+        boundary_row.addWidget(self.draw_btn)
+        form.addRow("Boundary polygons:", boundary_row)
 
         self.selected_only_check = QCheckBox("Selected features only")
         form.addRow("", self.selected_only_check)
@@ -235,6 +248,139 @@ class HypsometricDialog(QDialog):
     def _open_output_folder(self):
         if self._output_dir and os.path.isdir(self._output_dir):
             QDesktopServices.openUrl(QUrl.fromLocalFile(self._output_dir))
+
+    # --------------------------------------------------------------- drawing
+
+    def _map_canvas(self):
+        getter = getattr(self.iface, "mapCanvas", None)
+        return getter() if callable(getter) else None
+
+    def _on_draw_toggled(self, checked):
+        if checked:
+            if not self._start_drawing():
+                self.draw_btn.setChecked(False)
+        else:
+            self._stop_drawing()
+
+    def _ensure_drawn_layer(self):
+        """The scratch layer to digitize into, created on first use."""
+        project = QgsProject.instance()
+        if (self._drawn_layer is not None
+                and project.mapLayer(self._drawn_layer.id()) is not None):
+            return self._drawn_layer
+
+        crs = project.crs()
+        if crs is None or not crs.isValid():
+            dem = self.dem_combo.currentLayer()
+            crs = dem.crs() if dem is not None else None
+
+        layer = drawing.create_scratch_polygon_layer(crs)
+        if not layer.isValid():
+            QMessageBox.critical(
+                self, "Hypsometric Analysis Toolkit",
+                "Could not create the temporary polygon layer."
+            )
+            return None
+
+        project.addMapLayer(layer)
+        self._drawn_layer = layer
+        self.boundary_combo.setLayer(layer)
+        self._log(
+            f"Created temporary layer '{layer.name()}' "
+            f"({layer.crs().authid() or 'project CRS'}). It is not saved to "
+            "disk; use Layer > Make Permanent to keep it."
+        )
+        return layer
+
+    def _start_drawing(self):
+        canvas = self._map_canvas()
+        if canvas is None:
+            QMessageBox.warning(
+                self, "Hypsometric Analysis Toolkit",
+                "The map canvas is not available, so drawing is disabled."
+            )
+            return False
+
+        try:
+            from qgis.gui import QgsMapToolCapture, QgsMapToolDigitizeFeature
+        except ImportError as exc:
+            QMessageBox.warning(
+                self, "Hypsometric Analysis Toolkit",
+                f"Digitizing tools are unavailable in this QGIS build:\n{exc}"
+            )
+            return False
+
+        layer = self._ensure_drawn_layer()
+        if layer is None:
+            return False
+
+        # the capture modes moved under CaptureMode in newer QGIS versions
+        mode = getattr(QgsMapToolCapture, "CapturePolygon", None)
+        if mode is None:
+            mode = QgsMapToolCapture.CaptureMode.CapturePolygon
+        cad_getter = getattr(self.iface, "cadDockWidget", None)
+        cad_widget = cad_getter() if callable(cad_getter) else None
+
+        self._draw_tool = QgsMapToolDigitizeFeature(canvas, cad_widget, mode)
+        self._draw_tool.setLayer(layer)
+        self._draw_tool.digitizingCompleted.connect(self._on_polygon_digitized)
+        canvas.setMapTool(self._draw_tool)
+        if not self._map_tool_watched:
+            canvas.mapToolSet.connect(self._on_map_tool_set)
+            self._map_tool_watched = True
+
+        self.draw_btn.setText("Stop drawing")
+        self._set_status(
+            "Drawing: click vertices on the map canvas, right-click to close "
+            f"the polygon. Each one is added to '{layer.name()}'."
+        )
+        return True
+
+    def _stop_drawing(self):
+        tool, self._draw_tool = self._draw_tool, None
+        if tool is not None:
+            try:
+                tool.digitizingCompleted.disconnect(self._on_polygon_digitized)
+            except (TypeError, RuntimeError):
+                pass
+            canvas = self._map_canvas()
+            if canvas is not None and canvas.mapTool() is tool:
+                canvas.unsetMapTool(tool)
+        self.draw_btn.setText("Draw polygon")
+        if self.draw_btn.isChecked():
+            self.draw_btn.setChecked(False)
+
+    def _on_map_tool_set(self, new_tool, _old_tool=None):
+        """Untoggle the button when QGIS switches to a different map tool."""
+        if self._draw_tool is not None and new_tool is not self._draw_tool:
+            self._stop_drawing()
+
+    def _on_polygon_digitized(self, feature):
+        layer = self._drawn_layer
+        if layer is None:
+            return
+        if QgsProject.instance().mapLayer(layer.id()) is None:
+            self._drawn_layer = None
+            self._stop_drawing()
+            self._set_status(
+                "The temporary polygon layer was removed, so drawing stopped."
+            )
+            return
+
+        count = drawing.add_polygon(layer, feature.geometry())
+        if count < 0:
+            self._set_status("The digitized polygon could not be added.")
+            return
+
+        self.boundary_combo.setLayer(layer)
+        self._set_status(
+            f"Polygon {count} added to '{layer.name()}'. Draw another, or stop "
+            "drawing and run the analysis."
+        )
+
+    def closeEvent(self, event):
+        self._stop_drawing()
+        super().closeEvent(event)
 
     # ----------------------------------------------------------------- clean
 

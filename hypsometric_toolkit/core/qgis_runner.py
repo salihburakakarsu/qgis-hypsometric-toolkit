@@ -36,6 +36,27 @@ def _file_signature(path):
         return f"{path}|unknown"
 
 
+def geometry_signature(layer, selected_only):
+    """
+    Digest of the geometries that will actually be processed.
+
+    A drawn or edited layer keeps the same source and feature count while its
+    geometry changes, so without this a redrawn polygon would hit the cached
+    results of the previous one.
+    """
+    digest = hashlib.sha256()
+    count = 0
+    features = (layer.getSelectedFeatures() if selected_only
+                else layer.getFeatures())
+    for feature in features:
+        geometry = feature.geometry()
+        if geometry is None or geometry.isNull():
+            continue
+        digest.update(bytes(geometry.asWkb()))
+        count += 1
+    return f"geom={count}:{digest.hexdigest()}"
+
+
 def compute_params_hash(dem_layer, boundary_layer, selected_only, step,
                         use_percentage):
     """Stable hash of everything that influences the algorithm output."""
@@ -44,6 +65,7 @@ def compute_params_hash(dem_layer, boundary_layer, selected_only, step,
         _file_signature(boundary_layer.source().split("|")[0]),
         boundary_layer.source(),
         f"count={boundary_layer.featureCount()}",
+        geometry_signature(boundary_layer, selected_only),
         f"step={step}",
         f"pct={bool(use_percentage)}",
     ]
