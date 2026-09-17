@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <rect x="2" y="2" width="60" height="60" rx="10" fill="#2d6a4f"/>
+  <!-- axes -->
+  <path d="M 12 10 L 12 52 L 54 52" stroke="#d8f3dc" stroke-width="3"
+        fill="none" stroke-linecap="round"/>
+  <!-- hypsometric curve (concave, area filled) -->
+  <path d="M 12 12 C 30 14, 34 34, 52 50 L 12 50 Z"
+        fill="#95d5b2" fill-opacity="0.55"/>
+  <path d="M 12 12 C 30 14, 34 34, 52 50" stroke="#b7e4c7"
+        stroke-width="3.5" fill="none" stroke-linecap="round"/>
+</svg>
