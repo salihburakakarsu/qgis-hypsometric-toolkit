@@ -244,6 +244,44 @@ def main():
     check.ok("nothing plottable returns None",
              plotting.plot_curves([], os.path.join(OUTPUT_DIR, "empty.png")) is None)
 
+    # --------------------------------------------------------- cache cleaning
+    check.section("Cache cleaning")
+    fake_cache = os.path.join(OUTPUT_DIR, "profile", "hypsometric_toolkit", "cache")
+    for run_name in ("aaaa1111", "bbbb2222"):
+        run_path = os.path.join(fake_cache, run_name)
+        os.makedirs(run_path)
+        with open(os.path.join(run_path, "histogram_x_1.csv"), "w") as fh:
+            fh.write("Area,Elevation\n1.0,10.0\n")
+
+    check.ok("the managed cache folder is recognised",
+             qgis_runner.is_managed_cache(fake_cache))
+    check.ok("a custom output folder is not treated as the cache",
+             not qgis_runner.is_managed_cache(OUTPUT_DIR))
+
+    runs, size = qgis_runner.cache_summary(fake_cache)
+    check.ok("cache_summary counts the cached runs", runs == 2, f"got {runs}")
+    check.ok("cache_summary reports a non-zero size", size > 0, f"got {size}")
+
+    # the important one: cleaning must never delete a non-cache folder
+    guard_dir = os.path.join(OUTPUT_DIR, "not_a_cache")
+    guard_file = os.path.join(guard_dir, "keep_me.txt")
+    os.makedirs(guard_dir, exist_ok=True)
+    with open(guard_file, "w") as fh:
+        fh.write("do not delete")
+    removed, _freed = qgis_runner.clear_cache(guard_dir)
+    check.ok("clear_cache refuses a folder that is not the managed cache",
+             removed == 0 and os.path.isfile(guard_file))
+
+    removed, freed = qgis_runner.clear_cache(fake_cache)
+    check.ok("clear_cache removes every cached run", removed == 2, f"got {removed}")
+    check.ok("clear_cache reports the space it freed", freed > 0, f"got {freed}")
+    check.ok("the cache is empty afterwards",
+             qgis_runner.cache_summary(fake_cache) == (0, 0))
+    check.ok("the cache folder itself survives", os.path.isdir(fake_cache))
+    check.ok("format_size is human readable",
+             qgis_runner.format_size(1536) == "1.5 KB",
+             qgis_runner.format_size(1536))
+
     # --------------------------------------------------------------- dialog
     check.section("Dialog")
     from hypsometric_toolkit import classFactory
@@ -268,6 +306,17 @@ def main():
              "hypsometric_analysis_v2.py" in dlg.cmd_edit.text())
     check.ok("export buttons are enabled once results exist",
              dlg.export_csv_btn.isEnabled() and dlg.open_folder_btn.isEnabled())
+
+    dlg._reset_view()
+    check.ok("cleaning empties the results table", dlg.table.rowCount() == 0,
+             f"got {dlg.table.rowCount()} rows")
+    check.ok("cleaning disables the export buttons",
+             not dlg.export_csv_btn.isEnabled()
+             and not dlg.save_plot_btn.isEnabled()
+             and not dlg.open_folder_btn.isEnabled())
+    check.ok("cleaning clears the post-processing command and the log",
+             dlg.cmd_edit.text() == "" and dlg.log_edit.toPlainText() == "")
+    check.ok("cleaning forgets the output folder", dlg._output_dir is None)
 
     status = check.finish()
     print(f"Outputs left in: {OUTPUT_DIR}")

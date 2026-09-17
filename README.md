@@ -89,6 +89,11 @@ The *Log* tab carries the algorithm's own messages — check it if a polygon
 produced no output (usually it does not intersect the DEM, or it falls entirely
 in NODATA).
 
+**Clean…** starts over: it clears the results, plot and log, and deletes the
+cached runs held in the QGIS profile. It asks for confirmation before deleting
+anything, showing how many runs and how much disk space are involved, and never
+touches files you wrote to a custom output folder.
+
 ### Outputs, per run
 
 ```

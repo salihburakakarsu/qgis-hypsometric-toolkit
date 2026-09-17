@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.2.0
+
+- Added a **Clean…** button. It clears the results table, the curves plot and
+  the log, and deletes the cached runs stored in the QGIS profile. Deleting
+  cached data asks for confirmation first, showing how many runs and how much
+  disk space are involved; clearing the view alone does not.
+- Cleaning only ever touches the plugin's own cache folder — files written to a
+  custom output folder are left alone.
+
 ## 1.1.0
 
 - Plot now uses the Strahler convention (relative area a/A on X, relative

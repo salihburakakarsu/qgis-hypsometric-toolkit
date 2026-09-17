@@ -8,6 +8,7 @@ import glob
 import hashlib
 import json
 import os
+import shutil
 
 from qgis.core import (
     QgsApplication,
@@ -119,3 +120,68 @@ def find_cached_run(output_dir, params_hash):
         return None
     csvs = list_output_csvs(output_dir)
     return csvs or None
+
+
+def dir_size(path):
+    """Total size in bytes of a directory tree."""
+    total = 0
+    for root, _dirs, files in os.walk(str(path)):
+        for name in files:
+            try:
+                total += os.path.getsize(os.path.join(root, name))
+            except OSError:
+                pass
+    return total
+
+
+def is_managed_cache(cache_root):
+    """
+    True only for the plugin's own cache folder. Used as a guard before
+    deleting, so a custom output directory can never be removed by mistake.
+    """
+    expected = os.path.join("hypsometric_toolkit", "cache")
+    return os.path.normpath(str(cache_root)).endswith(expected)
+
+
+def cache_summary(cache_root=None):
+    """(number of cached runs, total bytes) held in the managed cache."""
+    cache_root = str(cache_root or default_cache_root())
+    if not os.path.isdir(cache_root):
+        return 0, 0
+    runs = [os.path.join(cache_root, name)
+            for name in os.listdir(cache_root)]
+    runs = [path for path in runs if os.path.isdir(path)]
+    return len(runs), sum(dir_size(path) for path in runs)
+
+
+def clear_cache(cache_root=None):
+    """
+    Delete every cached run directory. Returns (runs_removed, bytes_freed).
+
+    Only ever touches the plugin's own cache folder; anything else is refused.
+    """
+    cache_root = str(cache_root or default_cache_root())
+    if not is_managed_cache(cache_root) or not os.path.isdir(cache_root):
+        return 0, 0
+    removed = 0
+    freed = 0
+    for name in sorted(os.listdir(cache_root)):
+        path = os.path.join(cache_root, name)
+        if not os.path.isdir(path):
+            continue
+        size = dir_size(path)
+        shutil.rmtree(path, ignore_errors=True)
+        if not os.path.exists(path):
+            removed += 1
+            freed += size
+    return removed, freed
+
+
+def format_size(num_bytes):
+    """Human-readable byte count, e.g. '12.4 MB'."""
+    size = float(num_bytes)
+    for unit in ("B", "KB", "MB"):
+        if size < 1024:
+            return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} GB"

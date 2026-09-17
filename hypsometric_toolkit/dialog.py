@@ -204,6 +204,16 @@ class HypsometricDialog(QDialog):
                     self.export_csv_btn):
             btn.setEnabled(False)
             btn_row.addWidget(btn)
+
+        # always available: there may be cached runs even with nothing shown
+        self.clean_btn = QPushButton("Clean…")
+        self.clean_btn.setToolTip(
+            "Clear the results, plot and log shown here, and delete the runs "
+            "cached in the QGIS profile"
+        )
+        self.clean_btn.clicked.connect(self._on_clean_clicked)
+        btn_row.addWidget(self.clean_btn)
+
         btn_row.addStretch(1)
         btn_row.addWidget(close_btn)
         main.addLayout(btn_row)
@@ -225,6 +235,60 @@ class HypsometricDialog(QDialog):
     def _open_output_folder(self):
         if self._output_dir and os.path.isdir(self._output_dir):
             QDesktopServices.openUrl(QUrl.fromLocalFile(self._output_dir))
+
+    # ----------------------------------------------------------------- clean
+
+    def _reset_view(self):
+        """Clear everything a run produced, leaving the input choices alone."""
+        self._results = []
+        self._output_dir = None
+        self._plot_path = None
+        self.table.setRowCount(0)
+        self.plot_label.clear()
+        self.plot_label.setText("Run the analysis to see the curves plot.")
+        self.cmd_edit.clear()
+        self.log_edit.clear()
+        self.progress.setValue(0)
+        for btn in (self.open_folder_btn, self.save_plot_btn,
+                    self.export_csv_btn):
+            btn.setEnabled(False)
+
+    def _on_clean_clicked(self):
+        if self._running:
+            QMessageBox.information(
+                self, "Hypsometric Analysis Toolkit",
+                "A run is in progress. Cancel it before cleaning."
+            )
+            return
+
+        cache_root = qgis_runner.default_cache_root()
+        runs, size = qgis_runner.cache_summary(cache_root)
+
+        # Nothing to delete: clearing the view alone needs no confirmation.
+        if runs == 0:
+            self._reset_view()
+            self._set_status(
+                "Cleared the results, plot and log. No cached runs to delete."
+            )
+            return
+
+        answer = QMessageBox.question(
+            self, "Clean up",
+            f"Delete {runs} cached run(s) ({qgis_runner.format_size(size)}) from:\n"
+            f"{cache_root}\n\n"
+            "The results, plot and log shown here will also be cleared.\n"
+            "Anything written to a custom output folder is left untouched.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+
+        removed, freed = qgis_runner.clear_cache(cache_root)
+        self._reset_view()
+        self._set_status(
+            f"Cleaned: deleted {removed} cached run(s), "
+            f"freed {qgis_runner.format_size(freed)}."
+        )
 
     def _save_plot_as(self):
         if not self._plot_path or not os.path.isfile(self._plot_path):
