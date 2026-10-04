@@ -125,11 +125,12 @@ Managed cache runs live under
 ## Requirements
 
 - QGIS ≥ 3.16 with the Processing plugin enabled (it is, by default).
-  Tested on QGIS 3.34 LTR and 3.44 on macOS.
+  Tested on QGIS 3.34 LTR, 3.44 and 3.44.14 on macOS.
 - numpy, which ships with QGIS.
 - matplotlib is **optional**. When present it renders the plot; when absent the
   plugin falls back to a built-in Qt renderer that draws the same figure. (Some
-  QGIS builds, including 3.44 on macOS, do not bundle matplotlib.)
+  QGIS builds, such as the qgis.org 3.44 macOS package, do not bundle
+  matplotlib, while others, such as the MacPorts build, do.)
 
 ## Development
 
@@ -162,11 +163,19 @@ rather than a system or conda Python:
 /Applications/QGIS-LTR.app/Contents/MacOS/bin/python3 tests/test_plugin.py
 ```
 
+For a MacPorts build, point `QGIS_APP` at the bundle and use the MacPorts
+interpreter:
+
+```bash
+QGIS_APP=/Applications/MacPorts/QGIS3.app /opt/local/bin/python3.14 tests/test_plugin.py
+```
+
 On Linux, `python3 tests/test_plugin.py` usually works if `qgis.core` is
 importable. Set `QGIS_APP` (macOS bundle path) or `QGIS_PREFIX_PATH` to point
 the test at a specific install.
 
-QGIS 3.44 on macOS ships a Python that needs `PYTHONHOME` to start:
+The qgis.org 3.44 macOS package ships a Python that needs `PYTHONHOME` to
+start:
 
 ```bash
 PYTHONHOME=/Applications/QGIS.app/Contents/Frameworks \
