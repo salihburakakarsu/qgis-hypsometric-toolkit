@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.4.0
+
+- Added a **Detect rim…** button that fits a crater rim circle from the DEM, so
+  the boundary no longer has to be drawn by hand. It seeds from the floor
+  centroid, casts rays on each azimuth to pick the rim crest, fits a circle by
+  least squares, and re-casts from the fitted centre a few times.
+- Two modes: over the whole DEM (finds the deepest feature) or seeded from
+  boundary polygons (one rim per polygon). The polygon mode exists because a
+  whole-raster seed lands between two comparable depressions, in neither
+  crater.
+- The fitted circles land in a `Crater_rim` layer carrying `centre_shift_km`
+  and `fit_rms_km` — a large shift means the floor centroid was a poor centre,
+  a large rms means the rim is not actually circular — plus radius, diameter,
+  ray counts and a confidence flag.
+- Algorithm and defaults are ported from the standalone morphometry scripts, so
+  a rim fitted here matches one fitted there.
+
 ## 1.3.0
 
 - Added a **Draw polygon** button next to the boundary layer chooser. It

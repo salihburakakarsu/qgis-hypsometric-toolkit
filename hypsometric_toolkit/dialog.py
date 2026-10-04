@@ -9,6 +9,7 @@ import os
 from qgis.PyQt.QtCore import QCoreApplication, Qt, QUrl
 from qgis.PyQt.QtGui import QDesktopServices, QGuiApplication, QPixmap
 from qgis.PyQt.QtWidgets import (
+    QApplication,
     QCheckBox,
     QDialog,
     QDoubleSpinBox,
@@ -29,10 +30,12 @@ from qgis.PyQt.QtWidgets import (
     QTabWidget,
     QVBoxLayout,
 )
-from qgis.core import QgsMapLayerProxyModel, QgsProcessingFeedback, QgsProject
+from qgis.core import (QgsCoordinateTransform, QgsGeometry, QgsMapLayerProxyModel,
+                       QgsProcessingFeedback, QgsProject)
 from qgis.gui import QgsFileWidget, QgsMapLayerComboBox
 
-from .core import analysis, drawing, plotting, qgis_runner
+from .core import analysis, drawing, plotting, qgis_runner, rim
+from .rim_dialog import MODE_POLYGON, MODE_WHOLE, RimOptionsDialog
 
 RESULT_COLUMNS = [
     ("feature_id", "Feature"),
@@ -102,9 +105,16 @@ class HypsometricDialog(QDialog):
             "temporary polygon layer that is then used as the boundary"
         )
         self.draw_btn.toggled.connect(self._on_draw_toggled)
+        self.rim_btn = QPushButton("Detect rim…")
+        self.rim_btn.setToolTip(
+            "Fit a crater rim circle from the DEM and use it as the "
+            "boundary, instead of drawing one by hand"
+        )
+        self.rim_btn.clicked.connect(self._on_detect_rim_clicked)
         boundary_row = QHBoxLayout()
         boundary_row.addWidget(self.boundary_combo, 1)
         boundary_row.addWidget(self.draw_btn)
+        boundary_row.addWidget(self.rim_btn)
         form.addRow("Boundary polygons:", boundary_row)
 
         self.selected_only_check = QCheckBox("Selected features only")
@@ -248,6 +258,145 @@ class HypsometricDialog(QDialog):
     def _open_output_folder(self):
         if self._output_dir and os.path.isdir(self._output_dir):
             QDesktopServices.openUrl(QUrl.fromLocalFile(self._output_dir))
+
+    # --------------------------------------------------------- rim detection
+
+    def _boundary_features(self, layer):
+        """The features rim detection should seed from."""
+        if self.selected_only_check.isChecked():
+            return list(layer.getSelectedFeatures())
+        return list(layer.getFeatures())
+
+    def _on_detect_rim_clicked(self):
+        if self._running:
+            QMessageBox.information(
+                self, "Hypsometric Analysis Toolkit",
+                "A run is in progress. Wait for it to finish first."
+            )
+            return
+
+        dem = self.dem_combo.currentLayer()
+        if dem is None or not dem.isValid():
+            QMessageBox.warning(
+                self, "Hypsometric Analysis Toolkit",
+                "Select a valid DEM raster layer first — the rim is fitted "
+                "from its elevations."
+            )
+            return
+
+        boundary = self.boundary_combo.currentLayer()
+        has_polygons = boundary is not None and boundary.isValid()
+
+        options = RimOptionsDialog(self, has_polygons=has_polygons)
+        if options.exec_() != QDialog.Accepted:
+            return
+        params = options.values()
+
+        if params["mode"] == MODE_POLYGON and not has_polygons:
+            QMessageBox.warning(
+                self, "Hypsometric Analysis Toolkit",
+                "Polygon-seeded detection needs a polygon layer to seed from."
+            )
+            return
+
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            self._detect_rim(dem, boundary, params)
+        except Exception as exc:  # noqa: BLE001 - report anything that escapes
+            self._set_status(f"Rim detection failed: {exc}")
+            QMessageBox.critical(
+                self, "Hypsometric Analysis Toolkit",
+                f"Rim detection failed:\n{exc}"
+            )
+        finally:
+            QApplication.restoreOverrideCursor()
+
+    def _detect_rim(self, dem, boundary, params):
+        source = dem.source().split("|")[0]
+        self._set_status(
+            f"Reading {os.path.basename(source)} at 1/{params['downsample']} "
+            "resolution…"
+        )
+        QCoreApplication.processEvents()
+        z, geo = rim.read_dem(source, params["downsample"])
+
+        detect_args = {
+            "n_azimuths": params["n_azimuths"],
+            "passes": params["passes"],
+            "floor_pct": params["floor_pct"],
+        }
+
+        results = []
+        failures = []
+        if params["mode"] == MODE_WHOLE:
+            self._set_status("Fitting the rim over the whole DEM…")
+            QCoreApplication.processEvents()
+            results.append(("whole DEM",
+                            rim.detect_rim(z, geo, mask=None, **detect_args)))
+        else:
+            features = self._boundary_features(boundary)
+            if not features:
+                raise ValueError(
+                    "the boundary layer has no features to seed from"
+                    + (" (selected features only is checked)"
+                       if self.selected_only_check.isChecked() else "")
+                )
+            transform = QgsCoordinateTransform(
+                boundary.crs(), dem.crs(), QgsProject.instance())
+            for index, feature in enumerate(features, start=1):
+                label = f"polygon {feature.id()}"
+                self._set_status(
+                    f"Fitting the rim inside {label} "
+                    f"({index}/{len(features)})…"
+                )
+                QCoreApplication.processEvents()
+                geometry = feature.geometry()
+                if geometry is None or geometry.isNull():
+                    failures.append((label, "no geometry"))
+                    continue
+                if boundary.crs() != dem.crs():
+                    geometry = QgsGeometry(geometry)
+                    geometry.transform(transform)
+                try:
+                    mask = rim.polygon_mask(geo, geometry.asWkt())
+                    results.append(
+                        (label, rim.detect_rim(z, geo, mask=mask, **detect_args)))
+                except ValueError as exc:
+                    failures.append((label, str(exc)))
+
+        for label, reason in failures:
+            self._log(f"No rim fitted for {label}: {reason}")
+
+        if not results:
+            raise ValueError(
+                "no rim could be fitted. Try more rays, a larger polygon, or a "
+                "smaller downsample factor; see the Log tab."
+            )
+
+        layer = drawing.create_rim_layer(dem.crs())
+        if not layer.isValid():
+            raise ValueError("could not create the rim layer")
+        for label, result in results:
+            drawing.add_rim_polygon(layer, result, label)
+            self._log(
+                f"{label}: D = {result['diameter_km']:.2f} km, "
+                f"centre shift {result['shift_km']:.2f} km, "
+                f"rms {result['fit_rms_km']:.3f} km, "
+                f"{result['n_found']}/{result['n_rays']} rays, "
+                f"{result['quality']}"
+            )
+
+        QgsProject.instance().addMapLayer(layer)
+        self.boundary_combo.setLayer(layer)
+
+        flagged = [label for label, result in results
+                   if not result["quality"].startswith("ok")]
+        summary = (f"Fitted {len(results)} rim circle(s) into "
+                   f"'{layer.name()}', now set as the boundary layer.")
+        if flagged:
+            summary += (f" {len(flagged)} flagged — check centre_shift_km and "
+                        "fit_rms_km in the Log tab.")
+        self._set_status(summary)
 
     # --------------------------------------------------------------- drawing
 

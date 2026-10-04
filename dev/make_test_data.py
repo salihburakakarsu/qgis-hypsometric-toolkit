@@ -99,6 +99,48 @@ def generate(outdir):
     return dem_path, gpkg_path
 
 
+def generate_two_craters(outdir, name="two_craters.tif"):
+    """
+    DEM holding two craters of comparable depth.
+
+    This is the failure mode the handoff describes: a seed taken from the
+    lowest pixels of the whole raster lands between the two depressions, in
+    neither crater, so the rim has to be seeded from a polygon instead.
+    Returns (path, crater_a, crater_b) with each crater as (x, y, rim_radius).
+    """
+    nx = ny = 400
+    pixel = 20.0
+    origin_x, origin_y = 500000.0, 7300000.0
+    craters = [(2000.0, 2000.0, 1200.0, 800.0),
+               (6000.0, 6000.0, 1200.0, 780.0)]
+
+    xs = np.arange(nx) * pixel
+    ys = np.arange(ny) * pixel
+    x, y = np.meshgrid(xs, ys)
+
+    dem = np.full((ny, nx), BASE_ELEVATION)
+    for cx, cy, rim_r, depth in craters:
+        r = np.hypot(x - cx, y - cy)
+        dem -= depth * np.exp(-(r / (rim_r * 0.7)) ** 2)
+        dem += 300.0 * np.exp(-((r - rim_r) / (rim_r * 0.2)) ** 2)
+
+    os.makedirs(outdir, exist_ok=True)
+    path = os.path.join(outdir, name)
+    srs = osr.SpatialReference()
+    srs.ImportFromEPSG(EPSG)
+    ds = gdal.GetDriverByName("GTiff").Create(path, nx, ny, 1, gdal.GDT_Float32)
+    ds.SetGeoTransform((origin_x, pixel, 0, origin_y + ny * pixel, 0, -pixel))
+    ds.SetProjection(srs.ExportToWkt())
+    ds.GetRasterBand(1).WriteArray(np.flipud(dem).astype(np.float32))
+    ds.FlushCache()
+    ds = None
+
+    def to_map(cx, cy, rim_r):
+        return (origin_x + cx, origin_y + cy, rim_r)
+
+    return path, to_map(*craters[0][:3]), to_map(*craters[1][:3])
+
+
 def main():
     outdir = sys.argv[1] if len(sys.argv) > 1 else "./test_data"
     dem_path, gpkg_path = generate(outdir)

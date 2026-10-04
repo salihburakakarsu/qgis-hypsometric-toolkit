@@ -104,6 +104,37 @@ it, use *Layer ▸ Make Permanent* or export it as a shapefile / GeoPackage like
 any other layer. It is drawn in the project CRS; the algorithm reprojects it to
 the DEM's CRS on its own.
 
+### Detecting a crater rim from the DEM
+
+**Detect rim…**, beside *Draw polygon*, fits the boundary from the elevations
+instead of your hand. It seeds the search from the centroid of the lowest
+pixels, casts rays on each azimuth and picks the rim crest on each, fits a
+circle through those picks by least squares, then re-casts from the fitted
+centre and repeats. The fitted circles arrive as a `Crater_rim` polygon layer,
+selected as the boundary and ready to analyze.
+
+The seed is only a starting guess: for an asymmetric floor the lowest-pixel
+centroid is not the geometric centre of the rim, and the refinement is what
+makes the diameter trustworthy.
+
+Two modes:
+
+- **Whole DEM** — finds the deepest feature, one crater per raster.
+- **Inside the boundary polygons** — one rim per polygon, searching only within
+  each. Use this when a DEM holds more than one crater: a whole-raster seed
+  lands *between* two comparable depressions, in neither of them.
+
+Two attributes on each fitted circle say whether to trust it:
+
+| Attribute | Meaning |
+|---|---|
+| `centre_shift_km` | How far refinement moved the centre from the seed. Large means the seed was poor — and that an unrefined measurement would have been wrong. |
+| `fit_rms_km` | Circle-fit residual, i.e. how circular the rim actually is. Large means an elliptical or badly detected rim, so a single "diameter" means little. |
+
+`quality` combines them into `ok`, `LOW CONFIDENCE (n/N rays)` or
+`NON-CIRCULAR`, using the same thresholds as the standalone scripts (at least
+12 rays, rms under 0.08 × radius).
+
 **Clean…** starts over: it clears the results, plot and log, and deletes the
 cached runs held in the QGIS profile. It asks for confirmation before deleting
 anything, showing how many runs and how much disk space are involved, and never
@@ -140,10 +171,12 @@ hypsometric_toolkit/       the plugin itself
 ├── metadata.txt           QGIS plugin metadata
 ├── plugin.py              menu + toolbar entry points
 ├── dialog.py              the dialog (built in code, no .ui file)
+├── rim_dialog.py          parameter dialog for rim detection
 └── core/
     ├── analysis.py        HI math, CSV reading, summary writing (numpy only)
     ├── qgis_runner.py     Processing wrapper + run cache
-    ├── drawing.py         scratch polygon layer for the Draw polygon tool
+    ├── drawing.py         scratch polygon and fitted-rim layers
+    ├── rim.py             crater centre refinement + rim circle fitting
     └── plotting.py        matplotlib and Qt plot renderers
 build_zip.sh               packages the plugin for "Install from ZIP"
 dev/make_test_data.py      generates a synthetic DEM + boundary polygons

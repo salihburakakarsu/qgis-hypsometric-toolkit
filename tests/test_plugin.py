@@ -16,6 +16,7 @@ at a particular installation. Outputs are written to tests/output/.
 """
 
 import glob
+import math
 import os
 import shutil
 import sys
@@ -137,7 +138,7 @@ def main():
     sys.path.insert(0, REPO_ROOT)
     sys.path.insert(0, os.path.join(REPO_ROOT, "dev"))
     from hypsometric_toolkit.core import (analysis, drawing, plotting,
-                                          qgis_runner)
+                                          qgis_runner, rim)
     import make_test_data
 
     check = Checker()
@@ -247,6 +248,7 @@ def main():
 
     # -------------------------------------------------------- drawn polygons
     check.section("Drawn boundary polygons")
+    import numpy as np
     from qgis.core import (QgsCoordinateReferenceSystem, QgsFeature,
                            QgsGeometry, QgsPointXY, QgsProject)
 
@@ -289,6 +291,87 @@ def main():
         drawn_hi = analysis.analyze_csv(drawn_csvs[0])["hypsometric_integral_curve"]
         check.ok("the drawn polygon yields a usable HI",
                  drawn_hi is not None and 0.0 < drawn_hi < 1.0, f"got {drawn_hi}")
+
+    # --------------------------------------------------------- rim detection
+    check.section("Crater rim detection")
+
+    # the synthetic DEM's third landform is a crater: a rim ring at r = 350 m
+    # around a bowl, centred 1500 m east and 800 m north of the raster origin
+    crater_x, crater_y, crater_rim = 501500.0, 7300800.0, 350.0
+    z_dem, geo_dem = rim.read_dem(dem_path, downsample=1)
+    check.ok("the DEM reads into an array with its pixel size",
+             z_dem.shape == (300, 300) and abs(geo_dem["px"] - 10.0) < 1e-6,
+             f"{z_dem.shape}, px={geo_dem['px']}")
+
+    whole = rim.detect_rim(z_dem, geo_dem)
+    centre_error = math.hypot(whole["centre_x"] - crater_x,
+                              whole["centre_y"] - crater_y)
+    check.ok("whole-DEM detection finds the crater centre",
+             centre_error < 100.0, f"off by {centre_error:.0f} m")
+    check.ok("the fitted radius matches the modelled rim",
+             abs(whole["radius_m"] - crater_rim) < 90.0,
+             f"got {whole['radius_m']:.0f} m, expected {crater_rim:.0f} m")
+    check.ok("the quality indicators the handoff asks for are reported",
+             whole["shift_km"] is not None and whole["fit_rms_km"] is not None
+             and whole["quality"] is not None)
+    check.ok("every ray found a crest on a clean synthetic crater",
+             whole["n_found"] == whole["n_rays"],
+             f"{whole['n_found']}/{whole['n_rays']}")
+
+    # The Larmor Q failure mode: two comparable depressions in one raster.
+    two_path, crater_a, crater_b = make_test_data.generate_two_craters(
+        os.path.join(OUTPUT_DIR, "test_data"))
+    z_two, geo_two = rim.read_dem(two_path, downsample=1)
+
+    seed_row, seed_col = rim.floor_centroid(z_two, rim.DEFAULTS["floor_pct"])
+    seed_x, seed_y = rim.to_map(geo_two, seed_col, seed_row)
+    to_a = math.hypot(seed_x - crater_a[0], seed_y - crater_a[1])
+    to_b = math.hypot(seed_x - crater_b[0], seed_y - crater_b[1])
+    check.ok("a whole-raster seed lands in neither crater (the failure mode)",
+             min(to_a, to_b) > crater_a[2],
+             f"{to_a:.0f} m from A, {to_b:.0f} m from B, rim {crater_a[2]:.0f} m")
+
+    half = crater_a[2] * 2.2
+    wkt = "POLYGON((%f %f,%f %f,%f %f,%f %f,%f %f))" % (
+        crater_a[0] - half, crater_a[1] - half,
+        crater_a[0] + half, crater_a[1] - half,
+        crater_a[0] + half, crater_a[1] + half,
+        crater_a[0] - half, crater_a[1] + half,
+        crater_a[0] - half, crater_a[1] - half)
+    mask = rim.polygon_mask(geo_two, wkt)
+    check.ok("the polygon rasterizes to a mask over part of the raster",
+             mask.any() and not mask.all())
+
+    seeded = rim.detect_rim(z_two, geo_two, mask=mask)
+    seeded_error = math.hypot(seeded["centre_x"] - crater_a[0],
+                              seeded["centre_y"] - crater_a[1])
+    check.ok("seeding from a polygon recovers the right crater",
+             seeded_error < 150.0, f"off by {seeded_error:.0f} m")
+    check.ok("and its radius",
+             abs(seeded["radius_m"] - crater_a[2]) < 150.0,
+             f"got {seeded['radius_m']:.0f} m, expected {crater_a[2]:.0f} m")
+
+    check.ok("an empty mask is rejected rather than guessing",
+             _raises_value_error(rim.detect_rim, z_two, geo_two,
+                                 np.zeros_like(z_two, dtype=bool)))
+
+    rim_layer = drawing.create_rim_layer(
+        QgsCoordinateReferenceSystem("EPSG:32719"))
+    check.ok("the rim layer is valid and carries the quality fields",
+             rim_layer.isValid()
+             and rim_layer.fields().indexOf("centre_shift_km") >= 0
+             and rim_layer.fields().indexOf("fit_rms_km") >= 0)
+    check.ok("a fitted circle is written as a polygon feature",
+             drawing.add_rim_polygon(rim_layer, seeded, "polygon 1") == 1)
+    written = next(rim_layer.getFeatures())
+    check.ok("the polygon encloses the fitted centre",
+             written.geometry().contains(
+                 QgsGeometry.fromPointXY(
+                     QgsPointXY(seeded["centre_x"], seeded["centre_y"]))))
+    check.ok("the attributes carry the fit",
+             abs(written["radius_km"] - seeded["radius_km"]) < 1e-9
+             and written["source"] == "polygon 1"
+             and written["quality"] == seeded["quality"])
 
     # --------------------------------------------------------- cache cleaning
     check.section("Cache cleaning")
@@ -413,6 +496,48 @@ def main():
              dlg._drawn_layer.featureCount() == 2)
     dlg._stop_drawing()
     check.ok("stopping drawing releases the map tool", dlg._draw_tool is None)
+
+    # ----------------------------------------------------- detect rim button
+    check.section("Detect rim button")
+    QgsProject.instance().addMapLayer(dem)
+    dlg.dem_combo.setLayer(dem)
+    check.ok("the DEM can be chosen in the dialog",
+             dlg.dem_combo.currentLayer() is dem)
+
+    from hypsometric_toolkit.rim_dialog import MODE_WHOLE
+    dlg._detect_rim(dem, None, {"mode": MODE_WHOLE, "n_azimuths": 24,
+                                "passes": 3, "floor_pct": 2.0,
+                                "downsample": 1})
+    fitted = dlg.boundary_combo.currentLayer()
+    check.ok("a rim layer is created and selected as the boundary",
+             fitted is not None and fitted.name() == drawing.RIM_LAYER_NAME,
+             fitted.name() if fitted else "none")
+    check.ok("it holds one fitted circle", fitted.featureCount() == 1,
+             f"got {fitted.featureCount()}")
+    check.ok("the rim layer takes the DEM's CRS",
+             fitted.crs().authid() == dem.crs().authid())
+    fitted_feature = next(fitted.getFeatures())
+    check.ok("the fitted diameter matches the modelled crater",
+             abs(fitted_feature["diameter_km"] - 2 * crater_rim / 1000.0) < 0.2,
+             f"got {fitted_feature['diameter_km']:.3f} km")
+    check.ok("the circle is centred on the crater",
+             math.hypot(
+                 fitted_feature.geometry().centroid().asPoint().x() - crater_x,
+                 fitted_feature.geometry().centroid().asPoint().y() - crater_y
+             ) < 100.0)
+
+    rim_params = qgis_runner.build_params(
+        dem, fitted, False, STEP, False,
+        os.path.join(OUTPUT_DIR, "rim_run"))
+    os.makedirs(os.path.join(OUTPUT_DIR, "rim_run"), exist_ok=True)
+    qgis_runner.run_algorithm(rim_params)
+    rim_csvs = qgis_runner.list_output_csvs(os.path.join(OUTPUT_DIR, "rim_run"))
+    check.ok("the analysis runs on a detected rim polygon", len(rim_csvs) == 1,
+             f"got {len(rim_csvs)}")
+    if rim_csvs:
+        rim_hi = analysis.analyze_csv(rim_csvs[0])["hypsometric_integral_curve"]
+        check.ok("and yields a usable HI",
+                 rim_hi is not None and 0.0 < rim_hi < 1.0, f"got {rim_hi}")
 
     status = check.finish()
     print(f"Outputs left in: {OUTPUT_DIR}")
