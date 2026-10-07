@@ -89,6 +89,37 @@ The *Log* tab carries the algorithm's own messages — check it if a polygon
 produced no output (usually it does not intersect the DEM, or it falls entirely
 in NODATA).
 
+### Depth, diameter and d/D
+
+**Also measure crater depth, diameter and d/D**, in the Output section, appends
+standard morphometry to the summary CSV next to the HI columns. The hypsometric
+integral on its own cannot say whether the curve carries information beyond
+ordinary morphometry — this is what makes that comparison possible.
+
+It uses the rim fitted by *Detect rim* when there is one, and otherwise fits one
+inside each boundary polygon, so it works with drawn and prepared polygons too.
+
+Several different quantities get loosely called "depth", so each is reported
+separately rather than one being chosen:
+
+| Column | Meaning |
+|---|---|
+| `depth_rim_to_floor_m` | Rim crest to floor — the crater's depth |
+| `depth_alt_floor_m` | The same, under the other floor definition |
+| `rim_above_surroundings_m` | Rim crest above the surrounding plain |
+| `floor_below_surroundings_m` | Floor below the surrounding plain |
+| `elevation_range` (HI columns) | None of these: max minus min inside the polygon, set by two single pixels |
+
+The floor definition dominates the uncertainty, so both are reported. The
+default is a low percentile over a wide disc, which ignores wall pixels and
+barely moves when its radius changes; the alternative is the mean inside 0.4 ×
+the rim radius, which swings by hundreds of metres as that fraction changes
+because it starts averaging in the wall.
+
+`d_over_D` is depth over diameter, and `pike1977_predicted_depth_m` gives the
+Pike (1977) lunar depth-diameter prediction with the branch used — the simple
+and complex branches disagree badly across the transition near 15 km.
+
 ### Drawing an area of interest
 
 **Draw polygon**, next to the boundary layer chooser, skips preparing a
@@ -201,6 +232,7 @@ hypsometric_toolkit/       the plugin itself
     ├── qgis_runner.py     Processing wrapper + run cache
     ├── drawing.py         scratch polygon and fitted-rim layers
     ├── rim.py             crater centre refinement + rim circle fitting
+    ├── morphometry.py     depth, diameter and d/D
     └── plotting.py        matplotlib and Qt plot renderers
 build_zip.sh               packages the plugin for "Install from ZIP"
 dev/make_test_data.py      generates a synthetic DEM + boundary polygons

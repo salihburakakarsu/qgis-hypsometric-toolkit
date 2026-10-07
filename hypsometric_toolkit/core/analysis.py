@@ -17,10 +17,14 @@ from pathlib import Path
 
 import numpy as np
 
+from . import morphometry
+
 # numpy renamed trapz -> trapezoid in 2.0
 _trapezoid = getattr(np, "trapezoid", None) or np.trapz
 
-SUMMARY_FIELDS = [
+# The columns the standalone hypsometric_analysis_v2.py writes, in its order,
+# so its output and the plugin's stay interchangeable.
+HI_FIELDS = [
     "feature_id",
     "file_path",
     "hypsometric_integral_curve",
@@ -32,6 +36,10 @@ SUMMARY_FIELDS = [
     "interpretation",
 ]
 
+# Morphometry is appended after them, blank when it was not measured, so the
+# HI columns keep their meaning and position.
+SUMMARY_FIELDS = HI_FIELDS + morphometry.FIELDS
+
 
 def interpret_hi(hi):
     """Morphological interpretation of a hypsometric integral value."""
@@ -42,6 +50,22 @@ def interpret_hi(hi):
     if hi > 0.35:
         return "Mature - S-shaped profile, balanced erosion"
     return "Old - Concave profile, advanced erosion"
+
+
+def feature_fid_from_path(csv_path):
+    """
+    The QGIS feature id a histogram CSV came from.
+
+    The algorithm names its output histogram_<layer>_<feature id>.csv, so the
+    trailing number is what links a curve back to the polygon it came from.
+    Returns None when the name does not end in a number.
+    """
+    stem = Path(csv_path).stem
+    tail = stem.rsplit("_", 1)[-1]
+    try:
+        return int(tail)
+    except ValueError:
+        return None
 
 
 def feature_id_from_path(csv_path):
@@ -157,7 +181,8 @@ def write_summary_csv(results, out_path):
     out_path = str(out_path)
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     with open(out_path, "w", newline="") as fh:
-        writer = csv.DictWriter(fh, fieldnames=SUMMARY_FIELDS, extrasaction="ignore")
+        writer = csv.DictWriter(fh, fieldnames=SUMMARY_FIELDS,
+                                extrasaction="ignore", restval="")
         writer.writeheader()
         for res in results:
             writer.writerow(res)

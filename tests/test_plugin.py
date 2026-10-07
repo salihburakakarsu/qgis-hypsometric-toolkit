@@ -137,8 +137,8 @@ def main():
 
     sys.path.insert(0, REPO_ROOT)
     sys.path.insert(0, os.path.join(REPO_ROOT, "dev"))
-    from hypsometric_toolkit.core import (analysis, drawing, plotting,
-                                          qgis_runner, rim)
+    from hypsometric_toolkit.core import (analysis, drawing, morphometry,
+                                          plotting, qgis_runner, rim)
     import make_test_data
 
     check = Checker()
@@ -473,6 +473,75 @@ def main():
              abs(shapes[drawing.SHAPE_TRACED]["area_km2"]
                  - traced_geom.area() / 1e6) < 1e-6)
 
+    # ------------------------------------------------------ crater morphometry
+    check.section("Crater morphometry (depth, diameter, d/D)")
+    round_path, _rx, _ry, _ra, _rb = make_test_data.generate_elliptical_crater(
+        os.path.join(OUTPUT_DIR, "test_data"), name="round_crater.tif",
+        a=1200.0, b=1200.0)
+    z_round, geo_round = rim.read_dem(round_path, 1)
+    round_fit = rim.detect_rim(z_round, geo_round, n_azimuths=36)
+    morph = morphometry.compute(z_round, geo_round, round_fit)
+
+    check.ok("the diameter is twice the fitted radius",
+             abs(morph["diameter_km"] - 2 * round_fit["radius_km"]) < 0.01)
+    check.ok("the rim crest sits above the floor",
+             morph["rim_elev_m"] > morph["floor_elev_m"])
+    check.ok("depth is rim crest minus floor",
+             abs(morph["depth_rim_to_floor_m"]
+                 - (morph["rim_elev_m"] - morph["floor_elev_m"])) < 0.2)
+    check.ok("d/D is depth over diameter in the same units",
+             abs(morph["d_over_D"] - morph["depth_rim_to_floor_m"]
+                 / (morph["diameter_km"] * 1000.0)) < 1e-3)
+    check.ok("both floor definitions are reported",
+             morph["depth_alt_floor_m"] is not None
+             and morph["depth_alt_floor_m"] != morph["depth_rim_to_floor_m"])
+    check.ok("the floor definition used is recorded",
+             morph["floor_method"] == "percentile", morph["floor_method"])
+    check.ok("the rim fit quality travels with the measurement",
+             morph["rim_confidence"] == round_fit["quality"]
+             and morph["rays_found"] == "36/36")
+
+    # A fit's cy/cx are pixels on the grid it was measured on. Reusing it at a
+    # different downsample must go back through the map coordinates.
+    z_coarser, geo_coarser = rim.read_dem(round_path, 3)
+    morph_coarser = morphometry.compute(z_coarser, geo_coarser, round_fit)
+    check.ok("a fit measured at one downsample works at another",
+             abs(morph_coarser["diameter_km"] - morph["diameter_km"]) < 0.01
+             and abs(morph_coarser["depth_rim_to_floor_m"]
+                     - morph["depth_rim_to_floor_m"]) < 150.0,
+             f"{morph_coarser['depth_rim_to_floor_m']} vs "
+             f"{morph['depth_rim_to_floor_m']} m")
+
+    check.ok("Pike 1977 uses the simple branch below 15 km",
+             morphometry.pike1977_depth_km(5.0)[1] == "simple")
+    check.ok("and the complex branch above it",
+             morphometry.pike1977_depth_km(25.0)[1] == "complex")
+
+    check.ok("a feature id is recovered from the histogram filename",
+             analysis.feature_fid_from_path("histogram_boundaries_7.csv") == 7)
+    check.ok("and a name without one yields None",
+             analysis.feature_fid_from_path("summary.csv") is None)
+
+    check.ok("the HI columns still come first and unchanged",
+             analysis.SUMMARY_FIELDS[:len(analysis.HI_FIELDS)]
+             == analysis.HI_FIELDS)
+    check.ok("morphometry columns are appended after them",
+             analysis.SUMMARY_FIELDS[len(analysis.HI_FIELDS):]
+             == morphometry.FIELDS)
+
+    merged = dict(results[0])
+    merged.update(morph)
+    merged_path = analysis.write_summary_csv(
+        [merged, dict(results[1])], os.path.join(OUTPUT_DIR, "merged.csv"))
+    with open(merged_path) as fh:
+        merged_rows = list(__import__("csv").DictReader(fh))
+    check.ok("a measured feature carries its d/D into the summary",
+             merged_rows[0]["d_over_D"] == str(morph["d_over_D"]),
+             merged_rows[0]["d_over_D"])
+    check.ok("an unmeasured feature leaves the columns blank, not broken",
+             merged_rows[1]["d_over_D"] == ""
+             and merged_rows[1]["hypsometric_integral_curve"] != "")
+
     # --------------------------------------------------------- cache cleaning
     check.section("Cache cleaning")
     fake_cache = os.path.join(OUTPUT_DIR, "profile", "hypsometric_toolkit", "cache")
@@ -638,6 +707,7 @@ def main():
              "pixels" in options.grid_label.text(), options.grid_label.text())
     options.deleteLater()
 
+    dlg.morphometry_check.setChecked(True)
     rim_params = qgis_runner.build_params(
         dem, fitted, False, STEP, False,
         os.path.join(OUTPUT_DIR, "rim_run"))
@@ -650,6 +720,16 @@ def main():
         rim_hi = analysis.analyze_csv(rim_csvs[0])["hypsometric_integral_curve"]
         check.ok("and yields a usable HI",
                  rim_hi is not None and 0.0 < rim_hi < 1.0, f"got {rim_hi}")
+
+        dlg._finish(os.path.join(OUTPUT_DIR, "rim_run"), rim_csvs,
+                    from_cache=True)
+        measured = dlg._results[0]
+        check.ok("the dialog reports d/D beside HI when asked",
+                 measured.get("d_over_D") is not None
+                 and measured.get("hypsometric_integral_curve") is not None,
+                 str(measured.get("d_over_D")))
+        check.ok("and the cached rim fit is reused rather than refitted",
+                 len(dlg._rim_fits) >= 1)
 
     status = check.finish()
     print(f"Outputs left in: {OUTPUT_DIR}")

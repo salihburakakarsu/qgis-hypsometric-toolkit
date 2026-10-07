@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.6.0
+
+- The summary CSV can now carry **crater morphometry beside the hypsometric
+  integral**: rim-to-floor depth, diameter and d/D, plus the rim and floor
+  elevations, the rim's height above the surrounding plain, the floor's depth
+  below it, and the Pike (1977) predicted depth with the branch used. HI alone
+  cannot say whether the hypsometric curve adds anything beyond standard
+  morphometry; this is the comparison that can.
+- Enabled by a checkbox in Output. It uses the rim already fitted by Detect rim
+  when there is one, and otherwise fits one inside each boundary polygon, so it
+  works for drawn and prepared polygons too.
+- Two floor definitions are reported, not one: a low percentile over a wide
+  disc (the default, barely sensitive to its radius) and the mean inside
+  0.4 x the rim radius, which swings by hundreds of metres as that fraction
+  changes because it starts averaging in the wall. Keeping both keeps the
+  sensitivity visible.
+- The HI columns keep their names, order and position, and stay blank-padded
+  rather than absent when morphometry was not measured, so the output remains
+  interchangeable with the standalone scripts.
+
 ## 1.5.0
 
 - Rim detection can now output a **traced rim** — the detected rim picks

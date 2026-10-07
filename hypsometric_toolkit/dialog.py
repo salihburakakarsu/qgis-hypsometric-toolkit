@@ -34,7 +34,8 @@ from qgis.core import (QgsCoordinateTransform, QgsGeometry, QgsMapLayerProxyMode
                        QgsProcessingFeedback, QgsProject)
 from qgis.gui import QgsFileWidget, QgsMapLayerComboBox
 
-from .core import analysis, drawing, plotting, qgis_runner, rim
+from .core import (analysis, drawing, morphometry, plotting,
+                   qgis_runner, rim)
 from .rim_dialog import (MODE_POLYGON, MODE_WHOLE, SHAPE_BOTH,
                          SHAPE_CIRCLE, SHAPE_TRACED, RimOptionsDialog)
 
@@ -80,6 +81,9 @@ class HypsometricDialog(QDialog):
         self._plot_path = None
         self._draw_tool = None
         self._drawn_layer = None
+        self._rim_fits = {}
+        self._last_dem = None
+        self._last_boundary = None
         self._map_tool_watched = False
 
         self._build_ui()
@@ -163,6 +167,17 @@ class HypsometricDialog(QDialog):
         )
         self.reuse_check.setChecked(True)
         out_layout.addWidget(self.reuse_check)
+
+        self.morphometry_check = QCheckBox(
+            "Also measure crater depth, diameter and d/D"
+        )
+        self.morphometry_check.setToolTip(
+            "Fits the rim from the DEM for each boundary polygon and appends "
+            "depth, diameter and the depth/diameter ratio to the summary CSV, "
+            "so the hypsometric curve can be compared against standard "
+            "morphometry"
+        )
+        out_layout.addWidget(self.morphometry_check)
         main.addWidget(out_group)
 
         # --- run controls
@@ -404,6 +419,13 @@ class HypsometricDialog(QDialog):
 
         QgsProject.instance().addMapLayer(layer)
         self.boundary_combo.setLayer(layer)
+
+        # keep the fits so a later analysis can report depth without refitting
+        by_label = {label: result for label, result in results}
+        for feature in layer.getFeatures():
+            fit = by_label.get(feature["source"])
+            if fit is not None:
+                self._rim_fits[(layer.id(), feature.id())] = fit
 
         flagged = [label for label, result in results
                    if not result["quality"].startswith("ok")]
@@ -665,6 +687,7 @@ class HypsometricDialog(QDialog):
         selected_only = self.selected_only_check.isChecked()
         step = self.step_spin.value()
         use_pct = self.percentage_check.isChecked()
+        self._last_dem, self._last_boundary = dem, boundary
 
         params_hash = qgis_runner.compute_params_hash(
             dem, boundary, selected_only, step, use_pct
@@ -775,6 +798,9 @@ class HypsometricDialog(QDialog):
         for path, message in errors:
             self._log(f"Skipped {path}: {message}")
 
+        if self.morphometry_check.isChecked():
+            self._add_morphometry()
+
         self._populate_table()
 
         summary_path = os.path.join(output_dir, qgis_runner.SUMMARY_NAME)
@@ -806,6 +832,74 @@ class HypsometricDialog(QDialog):
             f"Analyzed {len(self._results)} feature(s) from {source}. "
             f"Outputs in: {output_dir}"
         )
+
+    def _add_morphometry(self):
+        """
+        Append depth, diameter and d/D to each analysed feature.
+
+        Uses the rim already fitted by Detect rim when there is one, and
+        otherwise fits one inside the boundary polygon, so this works for drawn
+        and prepared polygons too.
+        """
+        # fall back to the current selection, so this does not depend on
+        # state left behind by the run that produced the results
+        dem = self._last_dem or self.dem_combo.currentLayer()
+        boundary = self._last_boundary or self.boundary_combo.currentLayer()
+        if dem is None or boundary is None:
+            self._log("Depth not measured: the run's layers are unavailable.")
+            return
+
+        try:
+            source = dem.source().split("|")[0]
+            downsample = rim.suggested_downsample(dem.width(), dem.height())
+            self._set_status(f"Measuring depth and d/D from {os.path.basename(source)}…")
+            QCoreApplication.processEvents()
+            z, geo = rim.read_dem(source, downsample)
+        except Exception as exc:  # noqa: BLE001
+            self._log(f"Depth not measured: could not read the DEM ({exc}).")
+            return
+
+        features = {feature.id(): feature
+                    for feature in self._boundary_features(boundary)}
+        transform = QgsCoordinateTransform(
+            boundary.crs(), dem.crs(), QgsProject.instance())
+
+        measured = 0
+        for result in self._results:
+            fid = analysis.feature_fid_from_path(result["file_path"])
+            label = result["feature_id"]
+            if fid is None or fid not in features:
+                self._log(f"{label}: no matching polygon, depth not measured.")
+                continue
+            try:
+                fit = self._rim_fits.get((boundary.id(), fid))
+                if fit is None:
+                    geometry = features[fid].geometry()
+                    if geometry is None or geometry.isNull():
+                        raise ValueError("the polygon has no geometry")
+                    if boundary.crs() != dem.crs():
+                        geometry = QgsGeometry(geometry)
+                        geometry.transform(transform)
+                    mask = rim.polygon_mask(geo, geometry.asWkt())
+                    fit = rim.detect_rim(z, geo, mask=mask)
+                    self._rim_fits[(boundary.id(), fid)] = fit
+                result.update(morphometry.compute(z, geo, fit))
+                measured += 1
+                self._log(
+                    f"{label}: D = {result['diameter_km']:.2f} km, "
+                    f"depth = {result['depth_rim_to_floor_m']:.0f} m "
+                    f"(alt floor {result['depth_alt_floor_m']:.0f} m), "
+                    f"d/D = {result['d_over_D']:.4f}, "
+                    f"{result['rim_confidence']}"
+                )
+            except Exception as exc:  # noqa: BLE001
+                self._log(f"{label}: depth not measured ({exc}).")
+
+        if measured:
+            self._log(
+                f"Measured depth and d/D for {measured} of "
+                f"{len(self._results)} feature(s)."
+            )
 
     def _populate_table(self):
         self.table.setRowCount(len(self._results))

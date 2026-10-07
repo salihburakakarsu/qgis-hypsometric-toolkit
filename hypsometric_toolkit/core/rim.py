@@ -163,6 +163,18 @@ def to_map(geo, col, row):
             geo["origin_y"] - row * geo["py"])
 
 
+def from_map(geo, x, y):
+    """
+    Map coordinates -> pixel (col, row) on the downsampled grid.
+
+    The inverse of to_map. Pixel coordinates are only meaningful for the grid
+    they were measured on, so anything reusing a fit on a different downsample
+    has to come back through the map coordinates.
+    """
+    return ((x - geo["origin_x"]) / geo["px"],
+            (geo["origin_y"] - y) / geo["py"])
+
+
 # ------------------------------------------------------------ centre & rim
 
 def floor_centroid(z, pct=2.0):
@@ -439,6 +451,32 @@ def detect_rim(z, geo, mask=None, n_azimuths=DEFAULTS["n_azimuths"],
         "quality": quality_flag(fit, rim_km, min_rays, max_rms_frac),
     })
     return result
+
+
+def radial_distance_km(z, cy, cx, px, py):
+    """Distance in km from (cy, cx) to every pixel."""
+    ny, nx = z.shape
+    rows, cols = np.mgrid[0:ny, 0:nx]
+    return np.hypot((rows - cy) * py, (cols - cx) * px) / 1000.0
+
+
+def radial_profile(z, cy, cx, px, py, step_km, r_max_km, min_px=40):
+    """
+    Azimuthally averaged elevation against radius.
+
+    Returns (r, bin_centres_km, mean_elevation), with NaN for bins holding
+    fewer than min_px valid pixels. Ported from the standalone scripts so the
+    rim elevation is read off the same profile they use.
+    """
+    r = radial_distance_km(z, cy, cx, px, py)
+    edges = np.arange(0.0, r_max_km, step_km)
+    centres = (edges[:-1] + edges[1:]) / 2.0
+    mean = np.full(centres.shape, np.nan)
+    for i in range(len(centres)):
+        inside = (r >= edges[i]) & (r < edges[i + 1]) & np.isfinite(z)
+        if inside.sum() > min_px:
+            mean[i] = z[inside].mean()
+    return r, centres, mean
 
 
 def circle_points(centre_x, centre_y, radius_m, n=180):
