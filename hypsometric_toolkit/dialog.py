@@ -35,7 +35,8 @@ from qgis.core import (QgsCoordinateTransform, QgsGeometry, QgsMapLayerProxyMode
 from qgis.gui import QgsFileWidget, QgsMapLayerComboBox
 
 from .core import analysis, drawing, plotting, qgis_runner, rim
-from .rim_dialog import MODE_POLYGON, MODE_WHOLE, RimOptionsDialog
+from .rim_dialog import (MODE_POLYGON, MODE_WHOLE, SHAPE_BOTH,
+                         SHAPE_CIRCLE, SHAPE_TRACED, RimOptionsDialog)
 
 RESULT_COLUMNS = [
     ("feature_id", "Feature"),
@@ -380,8 +381,13 @@ class HypsometricDialog(QDialog):
         layer = drawing.create_rim_layer(dem.crs())
         if not layer.isValid():
             raise ValueError("could not create the rim layer")
+        shape = params.get("shape", SHAPE_CIRCLE)
+        shapes = ([SHAPE_CIRCLE, SHAPE_TRACED] if shape == SHAPE_BOTH
+                  else [shape])
         for label, result in results:
-            drawing.add_rim_polygon(layer, result, label)
+            for one_shape in shapes:
+                if drawing.add_rim_polygon(layer, result, label, one_shape) < 0:
+                    self._log(f"{label}: could not build the {one_shape} outline")
             self._log(
                 f"{label}: D = {result['diameter_km']:.2f} km, "
                 f"centre shift {result['shift_km']:.2f} km, "
@@ -389,6 +395,12 @@ class HypsometricDialog(QDialog):
                 f"{result['n_found']}/{result['n_rays']} rays, "
                 f"{result['quality']}"
             )
+            if SHAPE_TRACED in shapes and result.get("traced_area_km2"):
+                self._log(
+                    f"{label}: traced outline {result['traced_area_km2']:.2f} "
+                    f"km2 (circle {result['circle_area_km2']:.2f} km2), "
+                    f"{result['n_interpolated']} azimuth(s) interpolated"
+                )
 
         QgsProject.instance().addMapLayer(layer)
         self.boundary_combo.setLayer(layer)

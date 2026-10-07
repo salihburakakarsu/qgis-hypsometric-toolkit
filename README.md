@@ -130,6 +130,24 @@ high a value finds nothing; the default is scaled to the raster (12 for a NAC
 DTM of tens of thousands of pixels, 1–3 for a small one), the dialog shows the
 grid it produces, and an over-coarse choice says so rather than failing quietly.
 
+**The rim outline** can be a fitted circle, a traced rim, or both:
+
+- **Fitted circle** — the least-squares circle through the picks. One diameter,
+  plus a residual saying how circular the rim actually is.
+- **Traced rim** — the picks themselves, connected in azimuth order. Craters
+  are often not round, and a circle cannot represent an elliptical rim, so this
+  keeps the real outline and an area that is not forced to a circle. On a
+  synthetic 2:1 elliptical crater the traced outline recovers the 2.00 aspect
+  ratio exactly, where the circle is round by construction.
+- **Both** — written into one layer, told apart by the `shape` attribute, so
+  the two footprints can be compared in a single analysis run.
+
+Azimuths where no rim was found are interpolated from their neighbours so the
+traced ring closes; `n_interpolated` says how many. Both outlines share the
+same centre and the same rim picks, so a roughly one-pixel outward bias in the
+picks affects them equally — the traced outline improves the *shape*, not that
+bias.
+
 Two attributes on each fitted circle say whether to trust it:
 
 | Attribute | Meaning |

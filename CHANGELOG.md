@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.5.0
+
+- Rim detection can now output a **traced rim** — the detected rim picks
+  connected in azimuth order — as well as the fitted circle. Craters are often
+  not round, and a circle cannot represent an elliptical rim; the traced
+  outline keeps the real shape, so its area is not forced to a circle.
+- The outline is chosen in the detection dialog: fitted circle (the previous
+  behaviour, still the default), traced rim, or both in one layer distinguished
+  by a `shape` attribute.
+- Azimuths where no rim was found are interpolated from their neighbours so the
+  traced ring still closes; `n_interpolated` records how many, and too few
+  successful rays yields no traced outline rather than a guess.
+- New attributes on every rim feature: `shape`, `area_km2` and `eq_radius_km`,
+  so a traced outline's area can be compared with the circle's directly.
+
 ## 1.4.1
 
 - The rim detection **downsample** default now scales to the raster. The

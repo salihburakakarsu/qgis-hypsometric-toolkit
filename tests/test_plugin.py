@@ -402,6 +402,77 @@ def main():
              and written["source"] == "polygon 1"
              and written["quality"] == seeded["quality"])
 
+    # ---------------------------------------------------- traced rim outline
+    check.section("Traced rim outline")
+    ellipse_path, ell_x, ell_y, ell_a, ell_b = \
+        make_test_data.generate_elliptical_crater(
+            os.path.join(OUTPUT_DIR, "test_data"))
+    z_ell, geo_ell = rim.read_dem(ellipse_path, 1)
+    ell = rim.detect_rim(z_ell, geo_ell, n_azimuths=36)
+
+    check.ok("one traced vertex per azimuth",
+             len(ell["traced_points"]) == 36,
+             f"got {len(ell['traced_points'])}")
+    check.ok("a clean crater needs no interpolated azimuths",
+             ell["n_interpolated"] == 0, f"got {ell['n_interpolated']}")
+
+    # The point of tracing: a circle cannot represent an elliptical rim.
+    traced_radii = [row["rim_km"] for row in ell["rows"] if row["rim_km"]]
+    aspect = max(traced_radii) / min(traced_radii)
+    check.ok("the traced outline recovers the ellipse's 2:1 aspect ratio",
+             abs(aspect - ell_a / ell_b) < 0.15, f"got {aspect:.2f}")
+    check.ok("the circle fit flags the same rim as non-circular",
+             ell["quality"].startswith("NON-CIRCULAR"), ell["quality"])
+
+    true_area_km2 = math.pi * ell_a * ell_b / 1e6
+    circle_error = abs(ell["circle_area_km2"] - true_area_km2)
+    traced_error = abs(ell["traced_area_km2"] - true_area_km2)
+    check.ok("the traced area is closer to the true area than the circle's",
+             traced_error < circle_error,
+             f"traced {traced_error:.3f} vs circle {circle_error:.3f} km2")
+    check.ok("the equivalent radius follows from the traced area",
+             abs(ell["traced_eq_radius_km"]
+                 - math.sqrt(ell["traced_area_km2"] / math.pi)) < 1e-6)
+
+    # missing azimuths are filled so the ring still closes
+    gapped = [dict(row) for row in ell["rows"]]
+    for row in gapped[:4]:
+        row["rim_km"] = None
+    filled, n_filled = rim.interpolated_radii(gapped)
+    check.ok("missing azimuths are interpolated from their neighbours",
+             filled is not None and n_filled == 4 and np.all(np.isfinite(filled)),
+             f"n_filled={n_filled}")
+    check.ok("too few rays yields no traced outline rather than a guess",
+             rim.interpolated_radii(
+                 [{"azimuth": 0.0, "rim_km": 1.0},
+                  {"azimuth": 90.0, "rim_km": None}])[0] is None)
+
+    shape_layer = drawing.create_rim_layer(
+        QgsCoordinateReferenceSystem("EPSG:32719"))
+    check.ok("a circle outline is written",
+             drawing.add_rim_polygon(shape_layer, ell, "ellipse",
+                                     drawing.SHAPE_CIRCLE) == 1)
+    check.ok("a traced outline is written alongside it",
+             drawing.add_rim_polygon(shape_layer, ell, "ellipse",
+                                     drawing.SHAPE_TRACED) == 2)
+    shapes = {feature["shape"]: feature for feature in shape_layer.getFeatures()}
+    check.ok("both outlines are labelled by shape",
+             set(shapes) == {drawing.SHAPE_CIRCLE, drawing.SHAPE_TRACED},
+             str(set(shapes)))
+    check.ok("both polygons are geometrically valid",
+             all(f.geometry().isGeosValid() for f in shapes.values()))
+    check.ok("the traced polygon is not round, the circle is",
+             shapes[drawing.SHAPE_TRACED]["eq_radius_km"]
+             != shapes[drawing.SHAPE_CIRCLE]["eq_radius_km"])
+    traced_geom = shapes[drawing.SHAPE_TRACED].geometry()
+    check.ok("the traced polygon encloses the fitted centre",
+             traced_geom.contains(
+                 QgsGeometry.fromPointXY(QgsPointXY(ell["centre_x"],
+                                                    ell["centre_y"]))))
+    check.ok("its area attribute matches its geometry",
+             abs(shapes[drawing.SHAPE_TRACED]["area_km2"]
+                 - traced_geom.area() / 1e6) < 1e-6)
+
     # --------------------------------------------------------- cache cleaning
     check.section("Cache cleaning")
     fake_cache = os.path.join(OUTPUT_DIR, "profile", "hypsometric_toolkit", "cache")

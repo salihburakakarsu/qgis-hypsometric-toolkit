@@ -22,6 +22,10 @@ from .core import rim
 MODE_WHOLE = "whole"
 MODE_POLYGON = "polygon"
 
+SHAPE_CIRCLE = "circle"
+SHAPE_TRACED = "traced"
+SHAPE_BOTH = "both"
+
 
 class RimOptionsDialog(QDialog):
     def __init__(self, parent=None, has_polygons=True, dem_size=None,
@@ -61,6 +65,25 @@ class RimOptionsDialog(QDialog):
         hint.setWordWrap(True)
         mode_layout.addWidget(hint)
         layout.addWidget(mode_group)
+
+        shape_group = QGroupBox("Rim outline")
+        shape_layout = QVBoxLayout(shape_group)
+        self.circle_radio = QRadioButton(
+            "Fitted circle — least-squares circle through the rim picks")
+        self.traced_radio = QRadioButton(
+            "Traced rim — connect the rim picks themselves")
+        self.both_radio = QRadioButton("Both, in one layer")
+        self.circle_radio.setChecked(True)
+        for widget in (self.circle_radio, self.traced_radio, self.both_radio):
+            shape_layout.addWidget(widget)
+        shape_hint = QLabel(
+            "Craters are often not circular. The circle gives one diameter and "
+            "a residual saying how circular the rim is; the traced outline "
+            "keeps the real shape, so its area is not forced to a circle."
+        )
+        shape_hint.setWordWrap(True)
+        shape_layout.addWidget(shape_hint)
+        layout.addWidget(shape_group)
 
         params = QGroupBox("Detection")
         form = QFormLayout(params)
@@ -133,7 +156,14 @@ class RimOptionsDialog(QDialog):
         self.grid_label.setText(text)
 
     def values(self):
+        if self.both_radio.isChecked():
+            shape = SHAPE_BOTH
+        elif self.traced_radio.isChecked():
+            shape = SHAPE_TRACED
+        else:
+            shape = SHAPE_CIRCLE
         return {
+            "shape": shape,
             "mode": MODE_POLYGON if self.polygon_radio.isChecked() else MODE_WHOLE,
             "n_azimuths": self.rays_spin.value(),
             "passes": self.passes_spin.value(),

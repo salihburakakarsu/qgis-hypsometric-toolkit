@@ -311,6 +311,50 @@ def quality_flag(fit, rim_km, min_rays=12, max_rms_frac=0.08):
 
 # ---------------------------------------------------------------- detection
 
+def polygon_area_m2(points):
+    """Shoelace area of a closed ring given as (x, y) map coordinates."""
+    if len(points) < 3:
+        return 0.0
+    total = 0.0
+    for i in range(len(points)):
+        x1, y1 = points[i]
+        x2, y2 = points[(i + 1) % len(points)]
+        total += x1 * y2 - x2 * y1
+    return abs(total) / 2.0
+
+
+def interpolated_radii(rows):
+    """
+    Rim radius on every azimuth, filling in the rays that found nothing.
+
+    Missing azimuths are interpolated from their neighbours around the circle,
+    so the traced outline stays closed. Returns (radii_km, n_interpolated), or
+    (None, 0) when too few rays succeeded to interpolate between.
+    """
+    azimuths = np.array([row["azimuth"] for row in rows], dtype=float)
+    radii = np.array([row["rim_km"] if row["rim_km"] is not None else np.nan
+                      for row in rows], dtype=float)
+    found = np.isfinite(radii)
+    if found.sum() < 3:
+        return None, 0
+    if found.all():
+        return radii, 0
+
+    # wrap the found samples either side so azimuth 0 interpolates across north
+    az_found = azimuths[found]
+    r_found = radii[found]
+    az_extended = np.concatenate([az_found - 360.0, az_found, az_found + 360.0])
+    r_extended = np.concatenate([r_found, r_found, r_found])
+    return np.interp(azimuths, az_extended, r_extended), int((~found).sum())
+
+
+def rim_point(centre_x, centre_y, azimuth_deg, radius_km):
+    """Map coordinates of a rim pick. 0 degrees = north, increasing clockwise."""
+    theta = math.radians(azimuth_deg)
+    return (centre_x + radius_km * 1000.0 * math.sin(theta),
+            centre_y + radius_km * 1000.0 * math.cos(theta))
+
+
 def detect_rim(z, geo, mask=None, n_azimuths=DEFAULTS["n_azimuths"],
                passes=DEFAULTS["passes"], floor_pct=DEFAULTS["floor_pct"],
                min_rays=DEFAULTS["min_rays"],
@@ -367,8 +411,23 @@ def detect_rim(z, geo, mask=None, n_azimuths=DEFAULTS["n_azimuths"],
     centre_x, centre_y = to_map(geo, fit["cx"], fit["cy"])
     seed_x, seed_y = to_map(geo, fit["cx0"], fit["cy0"])
 
+    # The circle is a model; the picks themselves are the measurement. Tracing
+    # them follows a non-circular rim, which a single fitted radius cannot.
+    radii, n_interpolated = interpolated_radii(fit["rows"])
+    traced = []
+    if radii is not None:
+        traced = [rim_point(centre_x, centre_y, row["azimuth"], radius)
+                  for row, radius in zip(fit["rows"], radii)]
+    traced_area = polygon_area_m2(traced) if len(traced) >= 3 else None
+
     result = dict(fit)
     result.update({
+        "traced_points": traced,
+        "n_interpolated": n_interpolated,
+        "traced_area_km2": (traced_area / 1e6) if traced_area else None,
+        "traced_eq_radius_km": (math.sqrt(traced_area / math.pi) / 1000.0
+                                if traced_area else None),
+        "circle_area_km2": math.pi * rim_km ** 2,
         "centre_x": centre_x,
         "centre_y": centre_y,
         "seed_x": seed_x,

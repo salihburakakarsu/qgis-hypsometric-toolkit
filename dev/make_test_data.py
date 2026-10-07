@@ -141,6 +141,43 @@ def generate_two_craters(outdir, name="two_craters.tif"):
     return path, to_map(*craters[0][:3]), to_map(*craters[1][:3])
 
 
+def generate_elliptical_crater(outdir, name="elliptical_crater.tif",
+                               a=1800.0, b=900.0):
+    """
+    DEM with one clearly elliptical crater, like an oblique impact.
+
+    A fitted circle cannot represent this: it returns one diameter and a large
+    residual. Tracing the rim picks keeps the real outline, which is the point
+    of the traced mode. Returns (path, centre_x, centre_y, a, b).
+    """
+    nx = ny = 400
+    pixel = 20.0
+    origin_x, origin_y = 500000.0, 7300000.0
+    cx, cy = 4000.0, 4000.0
+
+    xs = np.arange(nx) * pixel
+    ys = np.arange(ny) * pixel
+    x, y = np.meshgrid(xs, ys)
+
+    # elliptical radius: 1.0 on the rim crest
+    rho = np.sqrt(((x - cx) / a) ** 2 + ((y - cy) / b) ** 2)
+    dem = np.full((ny, nx), BASE_ELEVATION)
+    dem -= 800.0 * np.exp(-(rho / 0.7) ** 2)
+    dem += 300.0 * np.exp(-((rho - 1.0) / 0.2) ** 2)
+
+    os.makedirs(outdir, exist_ok=True)
+    path = os.path.join(outdir, name)
+    srs = osr.SpatialReference()
+    srs.ImportFromEPSG(EPSG)
+    ds = gdal.GetDriverByName("GTiff").Create(path, nx, ny, 1, gdal.GDT_Float32)
+    ds.SetGeoTransform((origin_x, pixel, 0, origin_y + ny * pixel, 0, -pixel))
+    ds.SetProjection(srs.ExportToWkt())
+    ds.GetRasterBand(1).WriteArray(np.flipud(dem).astype(np.float32))
+    ds.FlushCache()
+    ds = None
+    return path, origin_x + cx, origin_y + cy, a, b
+
+
 def main():
     outdir = sys.argv[1] if len(sys.argv) > 1 else "./test_data"
     dem_path, gpkg_path = generate(outdir)

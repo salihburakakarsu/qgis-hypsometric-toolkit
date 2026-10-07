@@ -70,6 +70,10 @@ RIM_LAYER_NAME = "Crater_rim"
 # name, kind, key in the detect_rim() result
 RIM_FIELDS = [
     ("source", "str", None),
+    ("shape", "str", None),
+    ("area_km2", "double", None),
+    ("eq_radius_km", "double", None),
+    ("n_interpolated", "int", "n_interpolated"),
     ("radius_km", "double", "radius_km"),
     ("diameter_km", "double", "diameter_km"),
     ("centre_shift_km", "double", "shift_km"),
@@ -124,9 +128,18 @@ def create_rim_layer(crs=None, name=RIM_LAYER_NAME):
     return layer
 
 
-def add_rim_polygon(layer, result, source_label, n_vertices=180):
+SHAPE_CIRCLE = "circle"
+SHAPE_TRACED = "traced"
+
+
+def add_rim_polygon(layer, result, source_label, shape=SHAPE_CIRCLE,
+                    n_vertices=180):
     """
-    Append one fitted rim circle, as a polygon, with its quality attributes.
+    Append one rim outline as a polygon, with its quality attributes.
+
+    `shape` picks how the rim is drawn: SHAPE_CIRCLE is the least-squares
+    circle through the picks, SHAPE_TRACED connects the picks themselves, so a
+    non-circular rim keeps its actual outline.
 
     Returns the layer's new feature count, or -1 if it was rejected.
     """
@@ -137,14 +150,28 @@ def add_rim_polygon(layer, result, source_label, n_vertices=180):
     if layer is None or not result:
         return -1
 
-    points = [QgsPointXY(x, y) for x, y in rim_module.circle_points(
-        result["centre_x"], result["centre_y"], result["radius_m"], n_vertices)]
-    geometry = QgsGeometry.fromPolygonXY([points])
+    if shape == SHAPE_TRACED:
+        traced = result.get("traced_points") or []
+        if len(traced) < 3:
+            return -1
+        ring = [QgsPointXY(x, y) for x, y in traced]
+        area_km2 = result.get("traced_area_km2")
+        eq_radius_km = result.get("traced_eq_radius_km")
+    else:
+        ring = [QgsPointXY(x, y) for x, y in rim_module.circle_points(
+            result["centre_x"], result["centre_y"], result["radius_m"],
+            n_vertices)]
+        area_km2 = result.get("circle_area_km2")
+        eq_radius_km = result.get("radius_km")
 
+    geometry = QgsGeometry.fromPolygonXY([ring])
+
+    extras = {"source": source_label, "shape": shape,
+              "area_km2": area_km2, "eq_radius_km": eq_radius_km}
     feature = QgsFeature(layer.fields())
     feature.setGeometry(geometry)
     for field_name, _kind, key in RIM_FIELDS:
-        value = source_label if key is None else result.get(key)
+        value = extras[field_name] if key is None else result.get(key)
         feature.setAttribute(field_name, value)
 
     added, _features = layer.dataProvider().addFeatures([feature])
