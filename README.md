@@ -81,7 +81,8 @@ Hypsometric Analysis Toolkit*.
 3. Pick the DEM and polygon layers, set the **elevation step** (vertical bin
    size, in DEM units), choose where the output goes, and click **Run
    analysis**.
-4. Read the HI values and interpretation in the *Results* tab, view the figure
+4. Read the HI values and d/D in the *Results* tab (the Youthful/Mature/Old
+   interpretation is on each feature's tooltip, and in the summary CSV), view the figure
    in the *Curves plot* tab, and use *Open output folder*, *Export summary
    as…*, or *Save plot as…* to get the files.
 

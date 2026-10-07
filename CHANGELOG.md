@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.6.1
+
+- The Results tab now shows **d/D** beside the two HI columns, so the
+  comparison can be read without opening the summary CSV.
+- The **Interpretation** column has left the table, which was its widest
+  column. It is still written to the summary CSV, and is now on the tooltip of
+  each feature's name.
+
 ## 1.6.0
 
 - The summary CSV can now carry **crater morphometry beside the hypsometric

@@ -613,6 +613,17 @@ def main():
     dlg._finish(run_dir, csvs, from_cache=True)
     check.ok("results table is populated", dlg.table.rowCount() == 3,
              f"got {dlg.table.rowCount()} rows")
+    headers = [dlg.table.horizontalHeaderItem(i).text()
+               for i in range(dlg.table.columnCount())]
+    check.ok("the results tab shows d/D", "d/D" in headers, str(headers))
+    check.ok("and no longer shows the interpretation column",
+             "Interpretation" not in headers, str(headers))
+    check.ok("but the interpretation is still written to the summary CSV",
+             "interpretation" in analysis.SUMMARY_FIELDS)
+    with open(summary) as fh:
+        header_line = fh.readline().strip()
+    check.ok("and is present in the file written for this run",
+             "interpretation" in header_line.split(","))
     check.ok("post-processing command is shown",
              "hypsometric_analysis_v2.py" in dlg.cmd_edit.text())
     check.ok("export buttons are enabled once results exist",

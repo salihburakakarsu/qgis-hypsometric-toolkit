@@ -3,8 +3,9 @@ name=Hypsometric Analysis Toolkit
 qgisMinimumVersion=3.16
 description=Automates the Raster Terrain Analysis "Hypsometric Curves" algorithm and computes hypsometric integrals with morphological interpretation.
 about=Runs qgis:hypsometriccurves on a DEM + boundary polygon layer, caches the per-feature CSV outputs, computes the hypsometric integral (HI) for each feature (trapezoidal curve integration and elevation-relief ratio), classifies the landform stage (Youthful / Mature / Old), plots the curves, and writes a summary CSV compatible with the standalone hypsometric_analysis_v2.py script.
-version=1.6.0
-changelog=1.6.0 - Crater depth, diameter and d/D reported in the summary CSV beside the hypsometric integral
+version=1.6.1
+changelog=1.6.1 - Results tab shows d/D; the interpretation moves out of the table but stays in the summary CSV
+    1.6.0 - Crater depth, diameter and d/D reported in the summary CSV beside the hypsometric integral
     1.5.0 - Traced rim outline: connect the detected rim picks instead of forcing a circle, for craters that are not round
     1.4.1 - Rim detection: downsample default now scales to the raster, and an over-coarse value explains itself instead of finding nothing
     1.4.0 - Detect rim button: fit a crater rim circle from the DEM, over the whole raster or seeded from polygons, with centre-shift and circle-fit-rms quality attributes

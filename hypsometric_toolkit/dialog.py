@@ -39,15 +39,17 @@ from .core import (analysis, drawing, morphometry, plotting,
 from .rim_dialog import (MODE_POLYGON, MODE_WHOLE, SHAPE_BOTH,
                          SHAPE_CIRCLE, SHAPE_TRACED, RimOptionsDialog)
 
+# key, header, number format. The interpretation stays out of the table but
+# is still written to the summary CSV.
 RESULT_COLUMNS = [
-    ("feature_id", "Feature"),
-    ("hypsometric_integral_curve", "HI (curve)"),
-    ("hypsometric_integral_formula", "HI (formula)"),
-    ("min_elevation", "Min elev."),
-    ("max_elevation", "Max elev."),
-    ("elevation_range", "Relief"),
-    ("max_area", "Max area"),
-    ("interpretation", "Interpretation"),
+    ("feature_id", "Feature", None),
+    ("hypsometric_integral_curve", "HI (curve)", "{:.3f}"),
+    ("hypsometric_integral_formula", "HI (formula)", "{:.3f}"),
+    ("d_over_D", "d/D", "{:.4f}"),
+    ("min_elevation", "Min elev.", "{:,.1f}"),
+    ("max_elevation", "Max elev.", "{:,.1f}"),
+    ("elevation_range", "Relief", "{:,.1f}"),
+    ("max_area", "Max area", "{:,.1f}"),
 ]
 
 
@@ -904,20 +906,21 @@ class HypsometricDialog(QDialog):
     def _populate_table(self):
         self.table.setRowCount(len(self._results))
         for row, res in enumerate(self._results):
-            for col, (key, _label) in enumerate(RESULT_COLUMNS):
+            for col, (key, _label, fmt) in enumerate(RESULT_COLUMNS):
                 value = res.get(key)
-                if isinstance(value, float):
-                    if "integral" in key:
-                        text = f"{value:.3f}"
-                    else:
-                        text = f"{value:,.1f}"
-                elif value is None:
+                if value is None or value == "":
                     text = "—"
+                elif isinstance(value, (int, float)) and fmt:
+                    text = fmt.format(value)
                 else:
                     text = str(value)
                 item = QTableWidgetItem(text)
-                if isinstance(value, float):
+                if isinstance(value, (int, float)):
                     item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                if key == "feature_id" and res.get("interpretation"):
+                    # the interpretation left the table but is still worth
+                    # having to hand, and is still in the summary CSV
+                    item.setToolTip(str(res["interpretation"]))
                 self.table.setItem(row, col, item)
         self.table.resizeColumnsToContents()
 
