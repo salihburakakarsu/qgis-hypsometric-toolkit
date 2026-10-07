@@ -352,6 +352,28 @@ def main():
              abs(seeded["radius_m"] - crater_a[2]) < 150.0,
              f"got {seeded['radius_m']:.0f} m, expected {crater_a[2]:.0f} m")
 
+    # The failure this guards against: a polygon drawn round the crater ends
+    # at the rim. Confining the rays to it truncates every profile exactly
+    # where the crest's outward turnover is, so no crest is found, the centre
+    # never refines, and the diameter comes out badly wrong.
+    tight_wkt = "POLYGON((%f %f,%f %f,%f %f,%f %f,%f %f))" % (
+        crater_a[0] - crater_a[2], crater_a[1] - crater_a[2],
+        crater_a[0] + crater_a[2], crater_a[1] - crater_a[2],
+        crater_a[0] + crater_a[2], crater_a[1] + crater_a[2],
+        crater_a[0] - crater_a[2], crater_a[1] + crater_a[2],
+        crater_a[0] - crater_a[2], crater_a[1] - crater_a[2])
+    tight = rim.detect_rim(z_two, geo_two,
+                           mask=rim.polygon_mask(geo_two, tight_wkt))
+    check.ok("a polygon drawn at the rim still fits it",
+             abs(tight["radius_m"] - crater_a[2]) < 150.0,
+             f"got {tight['radius_m']:.0f} m, expected {crater_a[2]:.0f} m")
+    check.ok("and finds a crest on most rays, not a handful",
+             tight["n_found"] >= rim.DEFAULTS["min_rays"],
+             f"{tight['n_found']}/{tight['n_rays']}")
+    check.ok("and still lands on the seeded crater, not its neighbour",
+             math.hypot(tight["centre_x"] - crater_a[0],
+                        tight["centre_y"] - crater_a[1]) < 150.0)
+
     check.ok("an empty mask is rejected rather than guessing",
              _raises_value_error(rim.detect_rim, z_two, geo_two,
                                  np.zeros_like(z_two, dtype=bool)))

@@ -84,6 +84,7 @@ class HypsometricDialog(QDialog):
         self._draw_tool = None
         self._drawn_layer = None
         self._rim_fits = {}
+        self._flagged_rims = []
         self._crs_report = None
         self._last_dem = None
         self._last_boundary = None
@@ -861,6 +862,9 @@ class HypsometricDialog(QDialog):
         if step_warnings:
             notes.append(f"{len(step_warnings)} feature(s) may need a smaller "
                          "elevation step")
+        if getattr(self, "_flagged_rims", None):
+            notes.append(f"{len(self._flagged_rims)} rim fit(s) flagged — "
+                         "diameter and depth unreliable")
         if notes:
             summary += "  |  " + "; ".join(notes)
         self._set_status(summary)
@@ -927,11 +931,18 @@ class HypsometricDialog(QDialog):
             except Exception as exc:  # noqa: BLE001
                 self._log(f"{label}: depth not measured ({exc}).")
 
+        flagged = [result["feature_id"] for result in self._results
+                   if result.get("rim_confidence")
+                   and not str(result["rim_confidence"]).startswith("ok")]
         if measured:
-            self._log(
-                f"Measured depth and d/D for {measured} of "
-                f"{len(self._results)} feature(s)."
-            )
+            note = (f"Measured depth and d/D for {measured} of "
+                    f"{len(self._results)} feature(s).")
+            if flagged:
+                note += (f" {len(flagged)} rim fit(s) are flagged — their "
+                         "diameter and depth should not be trusted: see "
+                         "rim_confidence.")
+            self._log(note)
+        self._flagged_rims = flagged
 
     def _populate_table(self):
         self.table.setRowCount(len(self._results))

@@ -152,9 +152,12 @@ makes the diameter trustworthy.
 Two modes:
 
 - **Whole DEM** — finds the deepest feature, one crater per raster.
-- **Inside the boundary polygons** — one rim per polygon, searching only within
-  each. Use this when a DEM holds more than one crater: a whole-raster seed
-  lands *between* two comparable depressions, in neither of them.
+- **Inside the boundary polygons** — one rim per polygon. Use this when a DEM
+  holds more than one crater: a whole-raster seed lands *between* two
+  comparable depressions, in neither of them. The polygon selects which crater
+  to measure by seeding the search inside it; the rays themselves run on the
+  whole raster, so the polygon can be drawn tightly around the crater without
+  truncating the profiles that find the rim.
 
 **Downsample** reads the DEM at 1/N resolution, purely for speed — the fit does
 not need full resolution. Each ray needs at least 30 samples, though, so too

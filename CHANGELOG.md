@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.7.1
+
+- **Fixed: polygon-seeded rim detection gave a badly wrong diameter and depth
+  when the polygon was drawn around the crater.** Rays were confined to the
+  polygon, so every elevation profile was truncated at its edge — and a polygon
+  drawn round a crater ends at the rim, exactly where the crest's outward
+  turnover is. Almost every ray reported "no crest within reach", the fit fell
+  back to a median of the two that survived, and with fewer than five rim
+  points the centre never refined at all, leaving it on the floor centroid.
+  On a real 21.96 km crater this returned 14.51 km and a depth 1.3 km too
+  shallow.
+- The polygon now does only what it was introduced for: it **seeds** the
+  search, selecting which crater to measure. The rays run on the whole raster,
+  so the rim and its turnover are reachable. Both modes now agree with the
+  standalone scripts on that crater to within 0.01 km and 1 m.
+- A flagged rim fit (`LOW CONFIDENCE`, `NON-CIRCULAR`) is now called out in the
+  status line rather than only in the log, since its diameter and depth should
+  not be trusted.
+
 ## 1.7.0
 
 - The DEM's CRS is now checked before each run, and anything suspect is

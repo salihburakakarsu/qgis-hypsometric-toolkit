@@ -273,7 +273,7 @@ def fit_circle(points, px, py):
 
 
 def refine_centre(z, px, py, n_az=24, passes=3, floor_pct=2.0, cap_km=None,
-                  smooth=9):
+                  smooth=9, seed=None):
     """
     Floor centroid, then iterated circle fits to the rim picks.
 
@@ -281,7 +281,7 @@ def refine_centre(z, px, py, n_az=24, passes=3, floor_pct=2.0, cap_km=None,
     `fit_rms_km` means the rim is not circular (oblique impact, or a bad
     detection).
     """
-    cy, cx = floor_centroid(z, floor_pct)
+    cy, cx = seed if seed is not None else floor_centroid(z, floor_pct)
     cy0, cx0 = cy, cx
 
     radius = rms = None
@@ -383,20 +383,25 @@ def detect_rim(z, geo, mask=None, n_azimuths=DEFAULTS["n_azimuths"],
     Returns a dict with the fit plus map-space centre and radius, or raises
     ValueError when no rim could be found.
     """
-    z_work = z
-    cap_km = None
+    # A polygon selects which crater to measure, by seeding the search inside
+    # it. The rays themselves run on the whole raster: confining them to the
+    # polygon truncates every profile at its edge, and a polygon drawn round a
+    # crater ends at the rim - exactly where the crest's outward turnover is,
+    # so no crest is found and the centre never refines.
+    seed = None
     if mask is not None:
         if mask.shape != z.shape:
             raise ValueError("mask shape does not match the raster")
         if not mask.any():
             raise ValueError("the polygon covers no raster pixels")
-        z_work = np.where(mask, z, np.nan)
-        if not np.any(np.isfinite(z_work)):
+        inside = np.where(mask, z, np.nan)
+        if not np.any(np.isfinite(inside)):
             raise ValueError("the polygon covers no valid elevation data")
+        seed = floor_centroid(inside, floor_pct)
 
-    fit = refine_centre(z_work, geo["px"], geo["py"], n_az=n_azimuths,
-                        passes=passes, floor_pct=floor_pct, cap_km=cap_km,
-                        smooth=smooth)
+    fit = refine_centre(z, geo["px"], geo["py"], n_az=n_azimuths,
+                        passes=passes, floor_pct=floor_pct, smooth=smooth,
+                        seed=seed)
 
     rim_km = fit["fit_R_km"] or fit["median_rim_km"]
     if not rim_km:
@@ -407,13 +412,12 @@ def detect_rim(z, geo, mask=None, n_azimuths=DEFAULTS["n_azimuths"],
         detail = ", ".join(f"{count} {why}"
                            for why, count in sorted(reasons.items()))
         message = f"no rim crest was found on any azimuth ({detail})."
-        span = search_span_px(z_work, mask)
+        span = search_span_px(z, None)
         if reasons.get("too short") or reasons.get("nodata near centre"):
             message += (
                 f" The search area is about {span} pixels across at this "
                 f"downsample, and each ray needs {MIN_RAY_SAMPLES} samples. "
-                "Lower the downsample factor"
-                + (", or use a larger polygon." if mask is not None else ".")
+                "Lower the downsample factor."
             )
         else:
             message += (" Try more rays, or a smaller downsample factor, so "
