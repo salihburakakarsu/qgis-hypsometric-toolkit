@@ -38,7 +38,7 @@ HI_FIELDS = [
 
 # Morphometry is appended after them, blank when it was not measured, so the
 # HI columns keep their meaning and position.
-SUMMARY_FIELDS = HI_FIELDS + morphometry.FIELDS
+SUMMARY_FIELDS = HI_FIELDS + ["area_reliability"] + morphometry.FIELDS
 
 
 def interpret_hi(hi):

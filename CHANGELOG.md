@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.7.0
+
+- The DEM's CRS is now checked before each run, and anything suspect is
+  reported in the Log tab and summarised in the status line:
+  - a **geographic DEM** (degrees), whose Area column is in square degrees
+    rather than square metres;
+  - a **body-radius mismatch** between the DEM and the project, e.g. lunar data
+    with the project left on an Earth CRS;
+  - an **equirectangular DEM far from its `lat_ts`**, whose pixels are not
+    equal-area, with the size of the bias reported rather than silently
+    corrected.
+- Each warning says what is affected and what is not. HI is a ratio of areas,
+  so a uniform scale error cancels and HI survives it; absolute areas do not.
+  The summary CSV gains an `area_reliability` column recording this per run.
+- Scoped by measurement: the project CRS was verified not to affect anything
+  this plugin reports, because the algorithm reprojects boundaries into the
+  raster's CRS and takes areas from the raster's geotransform. A projected DEM
+  matching its project therefore raises nothing at all.
+- The gap between *HI (curve)* and *HI (formula)* is now flagged automatically
+  when the elevation step is too coarse for a feature's relief, instead of
+  being something to notice in the README.
+
 ## 1.6.1
 
 - The Results tab now shows **d/D** beside the two HI columns, so the

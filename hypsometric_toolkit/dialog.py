@@ -34,8 +34,8 @@ from qgis.core import (QgsCoordinateTransform, QgsGeometry, QgsMapLayerProxyMode
                        QgsProcessingFeedback, QgsProject)
 from qgis.gui import QgsFileWidget, QgsMapLayerComboBox
 
-from .core import (analysis, drawing, morphometry, plotting,
-                   qgis_runner, rim)
+from .core import (analysis, crs_check, drawing, morphometry,
+                   plotting, qgis_runner, rim)
 from .rim_dialog import (MODE_POLYGON, MODE_WHOLE, SHAPE_BOTH,
                          SHAPE_CIRCLE, SHAPE_TRACED, RimOptionsDialog)
 
@@ -84,6 +84,7 @@ class HypsometricDialog(QDialog):
         self._draw_tool = None
         self._drawn_layer = None
         self._rim_fits = {}
+        self._crs_report = None
         self._last_dem = None
         self._last_boundary = None
         self._map_tool_watched = False
@@ -691,6 +692,10 @@ class HypsometricDialog(QDialog):
         use_pct = self.percentage_check.isChecked()
         self._last_dem, self._last_boundary = dem, boundary
 
+        self._crs_report = crs_check.inspect_dem_crs(dem, QgsProject.instance().crs())
+        for warning in self._crs_report["warnings"]:
+            self._log(f"Warning: {warning}")
+
         params_hash = qgis_runner.compute_params_hash(
             dem, boundary, selected_only, step, use_pct
         )
@@ -800,6 +805,20 @@ class HypsometricDialog(QDialog):
         for path, message in errors:
             self._log(f"Skipped {path}: {message}")
 
+        reliability = (self._crs_report or {}).get(
+            "area_reliability", crs_check.AREAS_OK)
+        for result in self._results:
+            result["area_reliability"] = reliability
+
+        step_warnings = [
+            warning for warning in
+            (crs_check.hi_gap_warning(result, self.step_spin.value())
+             for result in self._results)
+            if warning
+        ]
+        for warning in step_warnings:
+            self._log(f"Warning: {warning}")
+
         if self.morphometry_check.isChecked():
             self._add_morphometry()
 
@@ -830,10 +849,21 @@ class HypsometricDialog(QDialog):
         self.progress.setValue(100)
 
         source = "cache" if from_cache else "processing run"
-        self._set_status(
-            f"Analyzed {len(self._results)} feature(s) from {source}. "
-            f"Outputs in: {output_dir}"
-        )
+        summary = (f"Analyzed {len(self._results)} feature(s) from {source}. "
+                   f"Outputs in: {output_dir}")
+        notes = []
+        if self._crs_report and not self._crs_report["areas_reliable"]:
+            notes.append(
+                f"absolute areas are unreliable ({reliability}) — HI is a "
+                "ratio and is unaffected")
+        elif self._crs_report and self._crs_report["warnings"]:
+            notes.append("see the Log tab for CRS notes")
+        if step_warnings:
+            notes.append(f"{len(step_warnings)} feature(s) may need a smaller "
+                         "elevation step")
+        if notes:
+            summary += "  |  " + "; ".join(notes)
+        self._set_status(summary)
 
     def _add_morphometry(self):
         """

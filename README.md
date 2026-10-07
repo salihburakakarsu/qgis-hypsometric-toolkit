@@ -209,6 +209,30 @@ touches files you wrote to a custom output folder.
 Managed cache runs live under
 `<QGIS profile>/hypsometric_toolkit/cache/<params-hash>/`.
 
+### Warnings about the DEM's CRS and the elevation step
+
+Before each run the DEM's CRS is checked and anything suspect is written to the
+*Log* tab, with a short note in the status line. Each warning says what it
+affects and what it does not, because **HI is a ratio of areas**: a uniform
+scale error cancels out and HI survives it untouched, while absolute areas do
+not. The summary CSV records this per run in `area_reliability`.
+
+| Checked | Effect |
+|---|---|
+| Geographic DEM (degrees) | `Area` is in square degrees, not square metres. HI unaffected. |
+| Body-radius mismatch with the project CRS | The plugin's numbers are unaffected, since it measures in the DEM's CRS — but on-screen measurements and other tools will be wrong. |
+| Equirectangular DEM far from its `lat_ts` | Pixels are not equal-area; the bias is reported rather than silently corrected. |
+
+The project CRS is deliberately *not* treated as a problem on its own: the
+algorithm reprojects boundaries into the raster's CRS and takes areas from the
+raster's geotransform, so the project CRS does not change anything reported
+here. A projected DEM matching its project raises nothing.
+
+Separately, a feature whose **elevation step is too coarse for its relief** is
+flagged: the two HI estimates diverge by roughly `step / (2 x relief)` on
+binned data, so a large predicted gap means the step should come down for that
+feature.
+
 ## Requirements
 
 - QGIS ≥ 3.16 with the Processing plugin enabled (it is, by default).
@@ -234,6 +258,7 @@ hypsometric_toolkit/       the plugin itself
     ├── drawing.py         scratch polygon and fitted-rim layers
     ├── rim.py             crater centre refinement + rim circle fitting
     ├── morphometry.py     depth, diameter and d/D
+    ├── crs_check.py       CRS and elevation-step sanity checks
     └── plotting.py        matplotlib and Qt plot renderers
 build_zip.sh               packages the plugin for "Install from ZIP"
 dev/make_test_data.py      generates a synthetic DEM + boundary polygons

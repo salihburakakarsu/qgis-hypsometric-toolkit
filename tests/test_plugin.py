@@ -137,8 +137,9 @@ def main():
 
     sys.path.insert(0, REPO_ROOT)
     sys.path.insert(0, os.path.join(REPO_ROOT, "dev"))
-    from hypsometric_toolkit.core import (analysis, drawing, morphometry,
-                                          plotting, qgis_runner, rim)
+    from hypsometric_toolkit.core import (analysis, crs_check, drawing,
+                                          morphometry, plotting,
+                                          qgis_runner, rim)
     import make_test_data
 
     check = Checker()
@@ -525,9 +526,13 @@ def main():
     check.ok("the HI columns still come first and unchanged",
              analysis.SUMMARY_FIELDS[:len(analysis.HI_FIELDS)]
              == analysis.HI_FIELDS)
-    check.ok("morphometry columns are appended after them",
-             analysis.SUMMARY_FIELDS[len(analysis.HI_FIELDS):]
+    check.ok("morphometry columns are appended at the end",
+             analysis.SUMMARY_FIELDS[-len(morphometry.FIELDS):]
              == morphometry.FIELDS)
+    check.ok("with the area-reliability note between the two groups",
+             analysis.SUMMARY_FIELDS[len(analysis.HI_FIELDS)]
+             == "area_reliability",
+             analysis.SUMMARY_FIELDS[len(analysis.HI_FIELDS)])
 
     merged = dict(results[0])
     merged.update(morph)
@@ -541,6 +546,92 @@ def main():
     check.ok("an unmeasured feature leaves the columns blank, not broken",
              merged_rows[1]["d_over_D"] == ""
              and merged_rows[1]["hypsometric_integral_curve"] != "")
+
+    # ------------------------------------------------------------ CRS checks
+    check.section("CRS and elevation-step warnings")
+    from osgeo import gdal, osr
+    from qgis.core import QgsRasterLayer
+
+    MOON_R = 1737400.0
+
+    def small_raster(name, epsg=None, proj=None, pixel=20.0,
+                     origin=(500000.0, 7300000.0)):
+        path = os.path.join(OUTPUT_DIR, "test_data", name)
+        ds = gdal.GetDriverByName("GTiff").Create(path, 50, 50, 1, gdal.GDT_Float32)
+        ds.SetGeoTransform((origin[0], pixel, 0, origin[1], 0, -pixel))
+        srs = osr.SpatialReference()
+        if proj:
+            srs.ImportFromProj4(proj)
+        else:
+            srs.ImportFromEPSG(epsg)
+        ds.SetProjection(srs.ExportToWkt())
+        ds.GetRasterBand(1).WriteArray(np.zeros((50, 50), dtype=np.float32))
+        ds.FlushCache()
+        ds = None
+        return QgsRasterLayer(path, name)
+
+    # The project CRS cannot change what this plugin reports, so a matching,
+    # projected DEM must produce no warnings at all - no crying wolf.
+    clean = crs_check.inspect_dem_crs(
+        small_raster("crs_ok.tif", epsg=32719),
+        QgsCoordinateReferenceSystem("EPSG:32719"))
+    check.ok("a projected DEM raises nothing",
+             clean["warnings"] == [] and clean["areas_reliable"]
+             and clean["area_reliability"] == crs_check.AREAS_OK,
+             str(clean["warnings"]))
+
+    geographic = crs_check.inspect_dem_crs(
+        small_raster("crs_geo.tif", epsg=4326, pixel=0.001, origin=(-69.0, -24.0)),
+        QgsCoordinateReferenceSystem("EPSG:4326"))
+    check.ok("a geographic DEM marks absolute areas unreliable",
+             not geographic["areas_reliable"]
+             and "degrees" in geographic["area_reliability"],
+             geographic["area_reliability"])
+    check.ok("and says HI is unaffected, because it is a ratio",
+             any("HI is a ratio" in w for w in geographic["warnings"]))
+
+    moon_proj = (f"+proj=eqc +lat_ts=20 +lat_0=0 +lon_0=0 +R={MOON_R} "
+                 "+units=m +no_defs")
+    mismatch = crs_check.inspect_dem_crs(
+        small_raster("crs_moon.tif", proj=moon_proj,
+                     origin=(0.0, math.radians(20.0) * MOON_R)),
+        QgsCoordinateReferenceSystem("EPSG:4326"))
+    check.ok("a body-radius mismatch with the project is reported",
+             any("body radius" in w for w in mismatch["warnings"]),
+             str(mismatch["warnings"]))
+    check.ok("but the results are not marked unreliable, since areas come "
+             "from the DEM's CRS",
+             mismatch["areas_reliable"])
+    check.ok("the Moon's radius is read from the CRS",
+             abs(crs_check.body_radius(
+                 QgsCoordinateReferenceSystem.fromProj(moon_proj)) - MOON_R) < 1)
+
+    # Equirectangular pixels are not equal-area: cos(lat)/cos(lat_ts).
+    far_proj = f"+proj=eqc +lat_ts=0 +lat_0=0 +lon_0=0 +R={MOON_R} +units=m +no_defs"
+    far = crs_check.inspect_dem_crs(
+        small_raster("crs_eqc.tif", proj=far_proj,
+                     origin=(0.0, math.radians(60.0) * MOON_R)),
+        QgsCoordinateReferenceSystem.fromProj(far_proj))
+    eqc_warnings = [w for w in far["warnings"] if "equirectangular" in w]
+    check.ok("an equirectangular DEM far from its lat_ts is flagged",
+             len(eqc_warnings) == 1, str(far["warnings"]))
+    check.ok("with the right scale factor (cos 60 = 0.5)",
+             eqc_warnings and "0.500x" in eqc_warnings[0],
+             eqc_warnings[0] if eqc_warnings else "")
+
+    # The elevation step warning, from the step/(2 x relief) rule.
+    coarse = {"feature_id": "F", "hypsometric_integral_curve": 0.278,
+              "hypsometric_integral_formula": 0.290, "elevation_range": 40.0}
+    check.ok("a step that is coarse for the relief is flagged",
+             crs_check.hi_gap_warning(coarse, 10.0) is not None)
+    check.ok("a fine step is not",
+             crs_check.hi_gap_warning(coarse, 1.0) is None)
+    check.ok("and a feature with no relief is not flagged",
+             crs_check.hi_gap_warning(
+                 dict(coarse, elevation_range=0.0), 10.0) is None)
+
+    check.ok("the summary CSV records whether areas can be trusted",
+             "area_reliability" in analysis.SUMMARY_FIELDS)
 
     # --------------------------------------------------------- cache cleaning
     check.section("Cache cleaning")
