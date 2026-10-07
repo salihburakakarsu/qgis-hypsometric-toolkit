@@ -124,6 +124,12 @@ Two modes:
   each. Use this when a DEM holds more than one crater: a whole-raster seed
   lands *between* two comparable depressions, in neither of them.
 
+**Downsample** reads the DEM at 1/N resolution, purely for speed — the fit does
+not need full resolution. Each ray needs at least 30 samples, though, so too
+high a value finds nothing; the default is scaled to the raster (12 for a NAC
+DTM of tens of thousands of pixels, 1–3 for a small one), the dialog shows the
+grid it produces, and an over-coarse choice says so rather than failing quietly.
+
 Two attributes on each fitted circle say whether to trust it:
 
 | Attribute | Meaning |

@@ -287,7 +287,11 @@ class HypsometricDialog(QDialog):
         boundary = self.boundary_combo.currentLayer()
         has_polygons = boundary is not None and boundary.isValid()
 
-        options = RimOptionsDialog(self, has_polygons=has_polygons)
+        options = RimOptionsDialog(
+            self, has_polygons=has_polygons,
+            dem_size=(dem.width(), dem.height()),
+            pixel_size=(dem.rasterUnitsPerPixelX(), dem.rasterUnitsPerPixelY()),
+        )
         if options.exec_() != QDialog.Accepted:
             return
         params = options.values()

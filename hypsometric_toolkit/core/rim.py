@@ -23,6 +23,12 @@ import math
 
 import numpy as np
 
+# A ray shorter than this many samples is rejected, so the search area has
+# to be a few times this across in downsampled pixels for anything to be
+# found. This is what makes an over-aggressive downsample fail.
+MIN_RAY_SAMPLES = 30
+MIN_SEARCH_SPAN_PX = 120
+
 # Script defaults, kept identical so results are comparable.
 DEFAULTS = {
     "downsample": 12,
@@ -86,6 +92,32 @@ def read_dem(path, downsample=1, band=1):
     }
     dataset = None
     return z, geo
+
+
+def suggested_downsample(width, height, cap=None):
+    """
+    A downsample factor that leaves enough pixels for the ray search.
+
+    The scripts' default of 12 suits LROC NAC DTMs of tens of thousands of
+    pixels; on a small raster it leaves a grid too coarse for any ray to reach
+    MIN_RAY_SAMPLES, and nothing is found. Scale it to the raster instead.
+    """
+    cap = DEFAULTS["downsample"] if cap is None else cap
+    smallest = max(min(int(width), int(height)), 1)
+    return max(1, min(int(cap), smallest // MIN_SEARCH_SPAN_PX))
+
+
+def search_span_px(z, mask=None):
+    """How many pixels across the region the rays may travel through."""
+    if mask is None:
+        return min(z.shape)
+    rows = np.any(mask, axis=1)
+    cols = np.any(mask, axis=0)
+    if not rows.any() or not cols.any():
+        return 0
+    height = int(np.flatnonzero(rows)[-1] - np.flatnonzero(rows)[0] + 1)
+    width = int(np.flatnonzero(cols)[-1] - np.flatnonzero(cols)[0] + 1)
+    return min(height, width)
 
 
 def polygon_mask(geo, wkt):
@@ -312,10 +344,25 @@ def detect_rim(z, geo, mask=None, n_azimuths=DEFAULTS["n_azimuths"],
 
     rim_km = fit["fit_R_km"] or fit["median_rim_km"]
     if not rim_km:
-        raise ValueError(
-            "no rim crest was found on any azimuth; try more rays, a larger "
-            "polygon, or a smaller downsample factor"
-        )
+        reasons = {}
+        for row in fit["rows"]:
+            if row["rim_km"] is None:
+                reasons[row["rim_z"]] = reasons.get(row["rim_z"], 0) + 1
+        detail = ", ".join(f"{count} {why}"
+                           for why, count in sorted(reasons.items()))
+        message = f"no rim crest was found on any azimuth ({detail})."
+        span = search_span_px(z_work, mask)
+        if reasons.get("too short") or reasons.get("nodata near centre"):
+            message += (
+                f" The search area is about {span} pixels across at this "
+                f"downsample, and each ray needs {MIN_RAY_SAMPLES} samples. "
+                "Lower the downsample factor"
+                + (", or use a larger polygon." if mask is not None else ".")
+            )
+        else:
+            message += (" Try more rays, or a smaller downsample factor, so "
+                        "the rim crest is resolved.")
+        raise ValueError(message)
 
     centre_x, centre_y = to_map(geo, fit["cx"], fit["cy"])
     seed_x, seed_y = to_map(geo, fit["cx0"], fit["cy0"])

@@ -355,6 +355,35 @@ def main():
              _raises_value_error(rim.detect_rim, z_two, geo_two,
                                  np.zeros_like(z_two, dtype=bool)))
 
+    # The scripts' downsample of 12 suits huge NAC DTMs; on a small raster it
+    # leaves too few pixels for any ray, which is a confusing silent failure.
+    check.ok("the suggested downsample scales to a small raster",
+             rim.suggested_downsample(400, 400) == 3,
+             f"got {rim.suggested_downsample(400, 400)}")
+    check.ok("and still matches the scripts on a NAC-sized DTM",
+             rim.suggested_downsample(20000, 18000) == rim.DEFAULTS["downsample"],
+             f"got {rim.suggested_downsample(20000, 18000)}")
+    check.ok("and never drops below 1",
+             rim.suggested_downsample(150, 150) == 1)
+    check.ok("the suggested downsample actually detects a rim",
+             rim.detect_rim(*rim.read_dem(two_path,
+                                          rim.suggested_downsample(400, 400)),
+                            mask=None) is not None)
+
+    z_coarse, geo_coarse = rim.read_dem(two_path, 12)
+    check.ok("an over-coarse downsample is rejected, not silently empty",
+             _raises_value_error(rim.detect_rim, z_coarse, geo_coarse))
+    try:
+        rim.detect_rim(z_coarse, geo_coarse)
+        coarse_message = ""
+    except ValueError as exc:
+        coarse_message = str(exc)
+    check.ok("and the error says why and what to change",
+             "downsample" in coarse_message and "pixels across" in coarse_message,
+             coarse_message[:70])
+    check.ok("the search span is measured over the mask, not the raster",
+             rim.search_span_px(z_two, mask) < rim.search_span_px(z_two, None))
+
     rim_layer = drawing.create_rim_layer(
         QgsCoordinateReferenceSystem("EPSG:32719"))
     check.ok("the rim layer is valid and carries the quality fields",
@@ -525,6 +554,18 @@ def main():
                  fitted_feature.geometry().centroid().asPoint().x() - crater_x,
                  fitted_feature.geometry().centroid().asPoint().y() - crater_y
              ) < 100.0)
+
+    from hypsometric_toolkit.rim_dialog import RimOptionsDialog
+    options = RimOptionsDialog(dlg, has_polygons=True,
+                               dem_size=(dem.width(), dem.height()),
+                               pixel_size=(10.0, 10.0))
+    check.ok("the options dialog defaults the downsample to the raster",
+             options.values()["downsample"]
+             == rim.suggested_downsample(dem.width(), dem.height()),
+             f"got {options.values()['downsample']}")
+    check.ok("and shows the resulting grid size",
+             "pixels" in options.grid_label.text(), options.grid_label.text())
+    options.deleteLater()
 
     rim_params = qgis_runner.build_params(
         dem, fitted, False, STEP, False,

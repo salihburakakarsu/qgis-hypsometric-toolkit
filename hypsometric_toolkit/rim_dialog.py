@@ -24,10 +24,13 @@ MODE_POLYGON = "polygon"
 
 
 class RimOptionsDialog(QDialog):
-    def __init__(self, parent=None, has_polygons=True):
+    def __init__(self, parent=None, has_polygons=True, dem_size=None,
+                 pixel_size=None):
         super().__init__(parent)
         self.setWindowTitle("Detect crater rim")
         self.setMinimumWidth(460)
+        self._dem_size = dem_size
+        self._pixel_size = pixel_size
 
         layout = QVBoxLayout(self)
 
@@ -85,13 +88,25 @@ class RimOptionsDialog(QDialog):
         form.addRow("Floor percentile:", self.floor_spin)
 
         self.downsample_spin = QSpinBox()
-        self.downsample_spin.setRange(1, 64)
-        self.downsample_spin.setValue(rim.DEFAULTS["downsample"])
         self.downsample_spin.setToolTip(
-            "Read the DEM at 1/N resolution. Higher is faster; the fit is "
-            "insensitive to it well before the rim stops being resolved."
+            "Read the DEM at 1/N resolution. Higher is faster, but each ray "
+            "needs at least 30 samples, so too high a value finds nothing. "
+            "The default is scaled to this raster."
         )
+        if dem_size:
+            suggested = rim.suggested_downsample(*dem_size)
+            self.downsample_spin.setRange(1, max(suggested, 1))
+            self.downsample_spin.setValue(suggested)
+        else:
+            self.downsample_spin.setRange(1, 64)
+            self.downsample_spin.setValue(rim.DEFAULTS["downsample"])
+        self.downsample_spin.valueChanged.connect(self._update_grid_label)
         form.addRow("Downsample:", self.downsample_spin)
+
+        self.grid_label = QLabel()
+        self.grid_label.setWordWrap(True)
+        form.addRow("", self.grid_label)
+        self._update_grid_label()
         layout.addWidget(params)
 
         buttons = QDialogButtonBox(
@@ -100,6 +115,22 @@ class RimOptionsDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+
+    def _update_grid_label(self):
+        """Show what the chosen downsample actually leaves to work with."""
+        if not self._dem_size:
+            self.grid_label.setText("")
+            return
+        factor = self.downsample_spin.value()
+        width = int(self._dem_size[0]) // factor
+        height = int(self._dem_size[1]) // factor
+        text = f"reads {width} x {height} pixels"
+        if self._pixel_size:
+            text += (f", {self._pixel_size[0] * factor:.1f} x "
+                     f"{self._pixel_size[1] * factor:.1f} map units each")
+        if min(width, height) < rim.MIN_SEARCH_SPAN_PX:
+            text += " — may be too coarse for the rays to find a rim"
+        self.grid_label.setText(text)
 
     def values(self):
         return {

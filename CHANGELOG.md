@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.4.1
+
+- The rim detection **downsample** default now scales to the raster. The
+  scripts' value of 12 suits LROC NAC DTMs of tens of thousands of pixels, but
+  on a small raster it left a grid too coarse for any ray to reach the 30
+  samples one needs, so detection found nothing with no explanation.
+- An over-coarse downsample now says so, with the search span in pixels and
+  what to change, instead of a generic hint.
+- The options dialog shows the grid size and pixel size the chosen downsample
+  produces, and warns when it looks too coarse.
+
 ## 1.4.0
 
 - Added a **Detect rim…** button that fits a crater rim circle from the DEM, so
