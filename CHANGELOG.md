@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.7.2
+
+- **Fixed: a small crater seeded by a polygon was measured badly.** A 1.27 km
+  crater on a NAC DTM came out as 3.10 km and flagged non-circular. Two causes,
+  both of scale:
+  - The rays ran to the edge of the whole raster. The steepest-wall scan
+    ignores the inner 15% of each ray, which on a raster-sized cap sat *beyond*
+    the small crater's rim, so the search locked onto features outside it. The
+    ray length now comes from the seeding polygon.
+  - The DEM was read at a resolution chosen from the raster's size, giving 36 m
+    pixels for a crater 1.3 km across — about 35 pixels, below what the rim
+    detection can work with. Resolution is now chosen from the polygon.
+- To make a fine resolution affordable, the DEM is read **only around each
+  polygon** rather than in full, and each polygon is read at its own
+  resolution. The small crater now reads 0.14M pixels at 9 m instead of 0.58M
+  at 36 m — finer *and* faster.
+- Verified against four real craters: the small one now measures 1.27 km, and
+  Giordano Bruno, Lichtenberg and Rosse still match the standalone scripts to
+  within 0.01 km.
+
 ## 1.7.1
 
 - **Fixed: polygon-seeded rim detection gave a badly wrong diameter and depth

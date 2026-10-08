@@ -425,6 +425,48 @@ def main():
              and written["source"] == "polygon 1"
              and written["quality"] == seeded["quality"])
 
+    # ------------------------------------------- a small crater in a big DEM
+    check.section("Small crater in a large raster")
+    mixed_path, big, small = make_test_data.generate_mixed_craters(
+        os.path.join(OUTPUT_DIR, "test_data"))
+
+    # the resolution has to follow the crater, not the raster
+    # a window is read around the polygon, so the grid judged here is the
+    # window's, not the whole raster's
+    check.ok("a small feature pulls the downsample down",
+             rim.downsample_for_feature(300, 300, span_px=90) == 1,
+             str(rim.downsample_for_feature(300, 300, span_px=90)))
+    check.ok("a window keeps a small crater finely sampled",
+             rim.downsample_for_feature(1200, 1200, span_px=454) == 3,
+             str(rim.downsample_for_feature(1200, 1200, span_px=454)))
+    check.ok("a large feature keeps the scripts' default",
+             rim.downsample_for_feature(20000, 18000, span_px=7000)
+             == rim.DEFAULTS["downsample"])
+    check.ok("and the decimated raster stays within the pixel budget",
+             (200000 // rim.downsample_for_feature(200000, 200000, span_px=90))
+             ** 2 <= rim.MAX_PIXELS)
+
+    z_mixed, geo_mixed = rim.read_dem(mixed_path, 1)
+    small_half = small[2] * 1.3          # a polygon just exceeding the crater
+    small_wkt = "POLYGON((%f %f,%f %f,%f %f,%f %f,%f %f))" % (
+        small[0] - small_half, small[1] - small_half,
+        small[0] + small_half, small[1] - small_half,
+        small[0] + small_half, small[1] + small_half,
+        small[0] - small_half, small[1] + small_half,
+        small[0] - small_half, small[1] - small_half)
+    small_fit = rim.detect_rim(z_mixed, geo_mixed,
+                               mask=rim.polygon_mask(geo_mixed, small_wkt))
+    check.ok("the small crater's own rim is fitted, not a larger feature",
+             abs(small_fit["radius_m"] - small[2]) < 200.0,
+             f"got {small_fit['radius_m']:.0f} m, expected {small[2]:.0f} m")
+    check.ok("it stays on the seeded crater",
+             math.hypot(small_fit["centre_x"] - small[0],
+                        small_fit["centre_y"] - small[1]) < 200.0)
+    check.ok("and the fit is not flagged",
+             small_fit["quality"] == "ok", small_fit["quality"])
+    check.ok("the big crater in the same raster still fits its own rim",
+             abs(rim.detect_rim(z_mixed, geo_mixed)["radius_m"] - big[2]) < 400.0)
+
     # ---------------------------------------------------- traced rim outline
     check.section("Traced rim outline")
     ellipse_path, ell_x, ell_y, ell_a, ell_b = \

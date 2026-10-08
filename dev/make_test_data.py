@@ -178,6 +178,48 @@ def generate_elliptical_crater(outdir, name="elliptical_crater.tif",
     return path, origin_x + cx, origin_y + cy, a, b
 
 
+def generate_mixed_craters(outdir, name="mixed_craters.tif"):
+    """
+    DEM with one large crater and one small one far apart.
+
+    The small crater is the case where a ray cap taken from the whole raster
+    fails: the steepest-wall scan ignores the inner 15% of each ray, which on a
+    raster-sized cap is further out than the small crater's rim.
+    Returns (path, big, small), each as (x, y, rim_radius).
+    """
+    nx = ny = 800
+    pixel = 20.0
+    origin_x, origin_y = 500000.0, 7300000.0
+    craters = [(4000.0, 11000.0, 3500.0, 900.0),
+               (11000.0, 4000.0, 700.0, 400.0)]
+
+    xs = np.arange(nx) * pixel
+    ys = np.arange(ny) * pixel
+    x, y = np.meshgrid(xs, ys)
+
+    dem = np.full((ny, nx), BASE_ELEVATION)
+    for cx, cy, rim_r, depth in craters:
+        r = np.hypot(x - cx, y - cy)
+        dem -= depth * np.exp(-(r / (rim_r * 0.7)) ** 2)
+        dem += depth * 0.35 * np.exp(-((r - rim_r) / (rim_r * 0.2)) ** 2)
+
+    os.makedirs(outdir, exist_ok=True)
+    path = os.path.join(outdir, name)
+    srs = osr.SpatialReference()
+    srs.ImportFromEPSG(EPSG)
+    ds = gdal.GetDriverByName("GTiff").Create(path, nx, ny, 1, gdal.GDT_Float32)
+    ds.SetGeoTransform((origin_x, pixel, 0, origin_y + ny * pixel, 0, -pixel))
+    ds.SetProjection(srs.ExportToWkt())
+    ds.GetRasterBand(1).WriteArray(np.flipud(dem).astype(np.float32))
+    ds.FlushCache()
+    ds = None
+
+    def to_map(cx, cy, rim_r, _depth):
+        return (origin_x + cx, origin_y + cy, rim_r)
+
+    return path, to_map(*craters[0]), to_map(*craters[1])
+
+
 def main():
     outdir = sys.argv[1] if len(sys.argv) > 1 else "./test_data"
     dem_path, gpkg_path = generate(outdir)

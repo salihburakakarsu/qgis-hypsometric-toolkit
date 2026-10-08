@@ -28,6 +28,16 @@ import numpy as np
 # found. This is what makes an over-aggressive downsample fail.
 MIN_RAY_SAMPLES = 30
 MIN_SEARCH_SPAN_PX = 120
+# A seeding polygon also sets how far the rays travel. Far enough to clear the
+# rim and the turnover just past it, not so far that the search leaves the
+# crater: the steepest-wall scan ignores the inner 15% of each ray, so a cap
+# taken from the whole raster can put a small crater's wall inside the ignored
+# zone and lock the fit onto something else entirely.
+RAY_CAP_FACTOR = 2.5
+# Keep a seeded feature this many pixels across, and the decimated raster
+# under this many pixels.
+MIN_FEATURE_PX = 150
+MAX_PIXELS = 30_000_000
 
 # Script defaults, kept identical so results are comparable.
 DEFAULTS = {
@@ -43,12 +53,17 @@ DEFAULTS = {
 
 # ----------------------------------------------------------------- loading
 
-def read_dem(path, downsample=1, band=1):
+def read_dem(path, downsample=1, band=1, window=None):
     """
-    Read a DEM at reduced resolution.
+    Read a DEM at reduced resolution, optionally only part of it.
 
-    Returns (z, geo): z is float64 with nodata as NaN, geo describes the
-    downsampled grid (pixel size, origin, geotransform, CRS WKT).
+    `window` is (xmin, ymin, xmax, ymax) in map coordinates. Reading a window
+    is what makes a fine resolution affordable when one small crater is being
+    measured in a large DTM: the whole raster at full resolution may be
+    hundreds of millions of pixels, while the crater's neighbourhood is not.
+
+    Returns (z, geo): z is float64 with nodata as NaN, geo describes the grid
+    that was read (pixel size, origin, geotransform, CRS WKT).
     """
     from osgeo import gdal
 
@@ -57,18 +72,35 @@ def read_dem(path, downsample=1, band=1):
     if dataset is None:
         raise ValueError(f"could not open raster: {path}")
 
-    raster_band = dataset.GetRasterBand(band)
-    width = dataset.RasterXSize // downsample
-    height = dataset.RasterYSize // downsample
-    if width < 2 or height < 2:
-        raise ValueError("downsample factor is larger than the raster")
+    gt = dataset.GetGeoTransform()
+    native_px, native_py = abs(gt[1]), abs(gt[5])
 
+    col0, row0 = 0, 0
+    win_width, win_height = dataset.RasterXSize, dataset.RasterYSize
+    if window is not None:
+        xmin, ymin, xmax, ymax = window
+        col0 = int(max(0, math.floor((xmin - gt[0]) / native_px)))
+        col1 = int(min(dataset.RasterXSize,
+                       math.ceil((xmax - gt[0]) / native_px)))
+        row0 = int(max(0, math.floor((gt[3] - ymax) / native_py)))
+        row1 = int(min(dataset.RasterYSize,
+                       math.ceil((gt[3] - ymin) / native_py)))
+        win_width, win_height = col1 - col0, row1 - row0
+        if win_width < 2 or win_height < 2:
+            raise ValueError("the search window does not overlap the raster")
+
+    width = max(win_width // downsample, 1)
+    height = max(win_height // downsample, 1)
+    if width < 2 or height < 2:
+        raise ValueError("downsample factor is larger than the area read")
+
+    raster_band = dataset.GetRasterBand(band)
+    read_args = dict(xoff=col0, yoff=row0, win_xsize=win_width,
+                     win_ysize=win_height, buf_xsize=width, buf_ysize=height)
     resample = getattr(gdal, "GRIORA_Average", None)
     if resample is not None:
-        z = raster_band.ReadAsArray(buf_xsize=width, buf_ysize=height,
-                                    resample_alg=resample)
-    else:  # very old GDAL
-        z = raster_band.ReadAsArray(buf_xsize=width, buf_ysize=height)
+        read_args["resample_alg"] = resample
+    z = raster_band.ReadAsArray(**read_args)
 
     z = np.asarray(z, dtype="float64")
     z[z < -1e30] = np.nan
@@ -76,15 +108,17 @@ def read_dem(path, downsample=1, band=1):
     if nodata is not None:
         z[z == nodata] = np.nan
 
-    gt = dataset.GetGeoTransform()
-    px = abs(gt[1]) * downsample
-    py = abs(gt[5]) * downsample
+    # the true pixel size of what was read, not the nominal factor
+    px = native_px * win_width / width
+    py = native_py * win_height / height
+    origin_x = gt[0] + col0 * native_px
+    origin_y = gt[3] - row0 * native_py
     geo = {
         "px": px,
         "py": py,
-        "origin_x": gt[0],
-        "origin_y": gt[3],
-        "gt": (gt[0], px, 0.0, gt[3], 0.0, -py),
+        "origin_x": origin_x,
+        "origin_y": origin_y,
+        "gt": (origin_x, px, 0.0, origin_y, 0.0, -py),
         "crs_wkt": dataset.GetProjection(),
         "width": width,
         "height": height,
@@ -105,6 +139,50 @@ def suggested_downsample(width, height, cap=None):
     cap = DEFAULTS["downsample"] if cap is None else cap
     smallest = max(min(int(width), int(height)), 1)
     return max(1, min(int(cap), smallest // MIN_SEARCH_SPAN_PX))
+
+
+def mask_span_px(mask):
+    """Pixels across the smaller side of the mask's bounding box."""
+    rows = np.any(mask, axis=1)
+    cols = np.any(mask, axis=0)
+    if not rows.any() or not cols.any():
+        return 0
+    height = int(np.flatnonzero(rows)[-1] - np.flatnonzero(rows)[0] + 1)
+    width = int(np.flatnonzero(cols)[-1] - np.flatnonzero(cols)[0] + 1)
+    return min(height, width)
+
+
+def search_window(geometry_bbox, factor=None):
+    """
+    Map-coordinate window to read around a seeding polygon.
+
+    Wide enough for the rays to clear the rim and the turnover beyond it.
+    `geometry_bbox` is (xmin, ymin, xmax, ymax).
+    """
+    factor = RAY_CAP_FACTOR if factor is None else factor
+    xmin, ymin, xmax, ymax = geometry_bbox
+    pad_x = (xmax - xmin) * (factor - 1.0) / 2.0
+    pad_y = (ymax - ymin) * (factor - 1.0) / 2.0
+    return (xmin - pad_x, ymin - pad_y, xmax + pad_x, ymax + pad_y)
+
+
+def downsample_for_feature(width, height, span_px, cap=None,
+                           min_px=MIN_FEATURE_PX, max_pixels=MAX_PIXELS):
+    """
+    Downsample for a raster being searched around a feature of a known size.
+
+    suggested_downsample() scales to the raster, which is right when the whole
+    raster is the subject. When a polygon picks out one small crater in a large
+    DTM, the raster's size says nothing about the resolution that crater needs:
+    a 1.4 km crater on a NAC DTM came out 36 m per pixel, barely 38 pixels
+    across. This scales to the feature instead, then backs off if the decimated
+    raster would be unreasonably large.
+    """
+    cap = DEFAULTS["downsample"] if cap is None else cap
+    factor = max(1, min(int(cap), int(span_px // min_px) if span_px else 1))
+    while (int(width) // factor) * (int(height) // factor) > max_pixels:
+        factor += 1
+    return factor
 
 
 def search_span_px(z, mask=None):
@@ -389,6 +467,7 @@ def detect_rim(z, geo, mask=None, n_azimuths=DEFAULTS["n_azimuths"],
     # crater ends at the rim - exactly where the crest's outward turnover is,
     # so no crest is found and the centre never refines.
     seed = None
+    cap_km = None
     if mask is not None:
         if mask.shape != z.shape:
             raise ValueError("mask shape does not match the raster")
@@ -398,10 +477,14 @@ def detect_rim(z, geo, mask=None, n_azimuths=DEFAULTS["n_azimuths"],
         if not np.any(np.isfinite(inside)):
             raise ValueError("the polygon covers no valid elevation data")
         seed = floor_centroid(inside, floor_pct)
+        # the polygon sets how far the rays go, so the search stays on the
+        # crater it was pointed at
+        radius_px = mask_span_px(mask) / 2.0
+        cap_km = RAY_CAP_FACTOR * radius_px * max(geo["px"], geo["py"]) / 1000.0
 
     fit = refine_centre(z, geo["px"], geo["py"], n_az=n_azimuths,
                         passes=passes, floor_pct=floor_pct, smooth=smooth,
-                        seed=seed)
+                        seed=seed, cap_km=cap_km)
 
     rim_km = fit["fit_R_km"] or fit["median_rim_km"]
     if not rim_km:

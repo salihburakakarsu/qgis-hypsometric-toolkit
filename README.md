@@ -159,6 +159,13 @@ Two modes:
   whole raster, so the polygon can be drawn tightly around the crater without
   truncating the profiles that find the rim.
 
+When seeding from polygons the DEM is read **only around each polygon**, at a
+resolution taken from that polygon's size, and the rays are capped by it too.
+Both matter for small craters: a resolution chosen from the raster is far too
+coarse for a 1 km crater in a 45 km DTM, and rays allowed to cross the whole
+raster make the wall-finding step skip the crater entirely. Untick *Choose
+automatically from the polygon size* to set the resolution yourself.
+
 **Downsample** reads the DEM at 1/N resolution, purely for speed — the fit does
 not need full resolution. Each ray needs at least 30 samples, though, so too
 high a value finds nothing; the default is scaled to the raster (12 for a NAC

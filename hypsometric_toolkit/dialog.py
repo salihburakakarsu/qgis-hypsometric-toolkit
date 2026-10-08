@@ -287,6 +287,30 @@ class HypsometricDialog(QDialog):
             return list(layer.getSelectedFeatures())
         return list(layer.getFeatures())
 
+    def _read_around(self, dem, source, geometry, auto=True, fallback=None):
+        """
+        Read the DEM around one seeding polygon.
+
+        Only the polygon's neighbourhood is read, at a resolution taken from
+        the polygon's own size. The raster's size says nothing about what a
+        small crater inside it needs, and reading all of a large DTM finely is
+        not affordable, so the two have to be decided together.
+        """
+        box = geometry.boundingBox()
+        window = rim.search_window(
+            (box.xMinimum(), box.yMinimum(), box.xMaximum(), box.yMaximum()))
+        pixel = max(dem.rasterUnitsPerPixelX(),
+                    dem.rasterUnitsPerPixelY()) or 1.0
+        if auto:
+            span_px = min(box.width(), box.height()) / pixel
+            window_px = max((window[2] - window[0]) / pixel, 1)
+            downsample = rim.downsample_for_feature(
+                window_px, (window[3] - window[1]) / pixel, span_px)
+        else:
+            downsample = fallback or rim.suggested_downsample(dem.width(),
+                                                              dem.height())
+        return rim.read_dem(source, downsample, window=window), downsample
+
     def _on_detect_rim_clicked(self):
         if self._running:
             QMessageBox.information(
@@ -337,52 +361,58 @@ class HypsometricDialog(QDialog):
 
     def _detect_rim(self, dem, boundary, params):
         source = dem.source().split("|")[0]
-        self._set_status(
-            f"Reading {os.path.basename(source)} at 1/{params['downsample']} "
-            "resolution…"
-        )
-        QCoreApplication.processEvents()
-        z, geo = rim.read_dem(source, params["downsample"])
+
+        geometries = []
+        if params["mode"] == MODE_POLYGON and boundary is not None:
+            transform = QgsCoordinateTransform(
+                boundary.crs(), dem.crs(), QgsProject.instance())
+            for feature in self._boundary_features(boundary):
+                geometry = feature.geometry()
+                if geometry is None or geometry.isNull():
+                    continue
+                if boundary.crs() != dem.crs():
+                    geometry = QgsGeometry(geometry)
+                    geometry.transform(transform)
+                geometries.append((feature.id(), geometry))
 
         detect_args = {
             "n_azimuths": params["n_azimuths"],
             "passes": params["passes"],
             "floor_pct": params["floor_pct"],
         }
+        auto = params.get("auto_downsample", True)
 
         results = []
         failures = []
         if params["mode"] == MODE_WHOLE:
-            self._set_status("Fitting the rim over the whole DEM…")
+            downsample = params.get("downsample") or rim.suggested_downsample(
+                dem.width(), dem.height())
+            self._set_status(
+                f"Reading {os.path.basename(source)} at 1/{downsample}…")
             QCoreApplication.processEvents()
+            z, geo = rim.read_dem(source, downsample)
             results.append(("whole DEM",
                             rim.detect_rim(z, geo, mask=None, **detect_args)))
         else:
-            features = self._boundary_features(boundary)
-            if not features:
+            if not geometries:
                 raise ValueError(
                     "the boundary layer has no features to seed from"
                     + (" (selected features only is checked)"
                        if self.selected_only_check.isChecked() else "")
                 )
-            transform = QgsCoordinateTransform(
-                boundary.crs(), dem.crs(), QgsProject.instance())
-            for index, feature in enumerate(features, start=1):
-                label = f"polygon {feature.id()}"
+            for index, (fid, geometry) in enumerate(geometries, start=1):
+                label = f"polygon {fid}"
                 self._set_status(
                     f"Fitting the rim inside {label} "
-                    f"({index}/{len(features)})…"
+                    f"({index}/{len(geometries)})…"
                 )
                 QCoreApplication.processEvents()
-                geometry = feature.geometry()
-                if geometry is None or geometry.isNull():
-                    failures.append((label, "no geometry"))
-                    continue
-                if boundary.crs() != dem.crs():
-                    geometry = QgsGeometry(geometry)
-                    geometry.transform(transform)
                 try:
+                    (z, geo), downsample = self._read_around(
+                        dem, source, geometry, auto, params.get("downsample"))
                     mask = rim.polygon_mask(geo, geometry.asWkt())
+                    self._log(f"{label}: read at 1/{downsample} "
+                              f"({geo['px']:.1f} m pixels)")
                     results.append(
                         (label, rim.detect_rim(z, geo, mask=mask, **detect_args)))
                 except ValueError as exc:
@@ -885,20 +915,24 @@ class HypsometricDialog(QDialog):
             self._log("Depth not measured: the run's layers are unavailable.")
             return
 
-        try:
-            source = dem.source().split("|")[0]
-            downsample = rim.suggested_downsample(dem.width(), dem.height())
-            self._set_status(f"Measuring depth and d/D from {os.path.basename(source)}…")
-            QCoreApplication.processEvents()
-            z, geo = rim.read_dem(source, downsample)
-        except Exception as exc:  # noqa: BLE001
-            self._log(f"Depth not measured: could not read the DEM ({exc}).")
-            return
-
         features = {feature.id(): feature
                     for feature in self._boundary_features(boundary)}
         transform = QgsCoordinateTransform(
             boundary.crs(), dem.crs(), QgsProject.instance())
+
+        def dem_geometry(feature):
+            geometry = feature.geometry()
+            if geometry is None or geometry.isNull():
+                return None
+            if boundary.crs() != dem.crs():
+                geometry = QgsGeometry(geometry)
+                geometry.transform(transform)
+            return geometry
+
+        source = dem.source().split("|")[0]
+        self._set_status(
+            f"Measuring depth and d/D from {os.path.basename(source)}…")
+        QCoreApplication.processEvents()
 
         measured = 0
         for result in self._results:
@@ -908,14 +942,13 @@ class HypsometricDialog(QDialog):
                 self._log(f"{label}: no matching polygon, depth not measured.")
                 continue
             try:
+                geometry = dem_geometry(features[fid])
+                if geometry is None:
+                    raise ValueError("the polygon has no geometry")
+                # read around this polygon, at the resolution it needs
+                (z, geo), _factor = self._read_around(dem, source, geometry)
                 fit = self._rim_fits.get((boundary.id(), fid))
                 if fit is None:
-                    geometry = features[fid].geometry()
-                    if geometry is None or geometry.isNull():
-                        raise ValueError("the polygon has no geometry")
-                    if boundary.crs() != dem.crs():
-                        geometry = QgsGeometry(geometry)
-                        geometry.transform(transform)
                     mask = rim.polygon_mask(geo, geometry.asWkt())
                     fit = rim.detect_rim(z, geo, mask=mask)
                     self._rim_fits[(boundary.id(), fid)] = fit

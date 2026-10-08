@@ -6,6 +6,7 @@ fitted there are the same measurement.
 """
 
 from qgis.PyQt.QtWidgets import (
+    QCheckBox,
     QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
@@ -126,6 +127,19 @@ class RimOptionsDialog(QDialog):
         self.downsample_spin.valueChanged.connect(self._update_grid_label)
         form.addRow("Downsample:", self.downsample_spin)
 
+        self.auto_downsample_check = QCheckBox(
+            "Choose automatically from the polygon size")
+        self.auto_downsample_check.setChecked(True)
+        self.auto_downsample_check.setToolTip(
+            "A small crater in a large DTM needs a finer resolution than the "
+            "raster's size alone suggests. Only applies when seeding from "
+            "polygons."
+        )
+        self.auto_downsample_check.toggled.connect(
+            lambda on: self.downsample_spin.setEnabled(not on))
+        self.downsample_spin.setEnabled(False)
+        form.addRow("", self.auto_downsample_check)
+
         self.grid_label = QLabel()
         self.grid_label.setWordWrap(True)
         form.addRow("", self.grid_label)
@@ -164,6 +178,7 @@ class RimOptionsDialog(QDialog):
             shape = SHAPE_CIRCLE
         return {
             "shape": shape,
+            "auto_downsample": self.auto_downsample_check.isChecked(),
             "mode": MODE_POLYGON if self.polygon_radio.isChecked() else MODE_WHOLE,
             "n_azimuths": self.rays_spin.value(),
             "passes": self.passes_spin.value(),
