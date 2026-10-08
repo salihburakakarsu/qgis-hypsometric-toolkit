@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.8.0
+
+- The Results tab now shows **D (km)** beside d/D, so diameter and the ratio
+  can be read together without opening the summary CSV.
+- The dialog is **freely resizable**. Its contents sit in a scroll area with
+  scrollbars on both axes, and the minimum size dropped from 780x680 to
+  360x240, so it can be made small enough to sit beside the map and still
+  reach every control by scrolling.
+
 ## 1.7.3
 
 - **Fixed: small craters measured too shallow.** The rim elevation is read off

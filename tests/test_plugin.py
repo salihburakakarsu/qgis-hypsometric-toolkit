@@ -792,6 +792,7 @@ def main():
 
     # --------------------------------------------------------------- dialog
     check.section("Dialog")
+    from qgis.PyQt.QtCore import QCoreApplication
     from qgis.gui import (QgsAdvancedDigitizingDockWidget, QgsMapCanvas,
                           QgsMapToolPan)
 
@@ -826,6 +827,21 @@ def main():
     headers = [dlg.table.horizontalHeaderItem(i).text()
                for i in range(dlg.table.columnCount())]
     check.ok("the results tab shows d/D", "d/D" in headers, str(headers))
+    check.ok("and the diameter", "D (km)" in headers, str(headers))
+    check.ok("the dialog can be resized small",
+             dlg.minimumWidth() <= 400 and dlg.minimumHeight() <= 300,
+             f"{dlg.minimumWidth()}x{dlg.minimumHeight()}")
+    dlg.show()
+    dlg.resize(380, 260)
+    QCoreApplication.processEvents()
+    QCoreApplication.processEvents()
+    check.ok("and scrolls on both axes when it is",
+             dlg.scroll_area.horizontalScrollBar().maximum() > 0
+             and dlg.scroll_area.verticalScrollBar().maximum() > 0,
+             f"h={dlg.scroll_area.horizontalScrollBar().maximum()} "
+             f"v={dlg.scroll_area.verticalScrollBar().maximum()}")
+    dlg.resize(960, 800)
+    QCoreApplication.processEvents()
     check.ok("and no longer shows the interpretation column",
              "Interpretation" not in headers, str(headers))
     check.ok("but the interpretation is still written to the summary CSV",

@@ -25,10 +25,12 @@ from qgis.PyQt.QtWidgets import (
     QPushButton,
     QRadioButton,
     QScrollArea,
+    QSizePolicy,
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
     QVBoxLayout,
+    QWidget,
 )
 from qgis.core import (QgsCoordinateTransform, QgsGeometry, QgsMapLayerProxyModel,
                        QgsProcessingFeedback, QgsProject)
@@ -45,6 +47,7 @@ RESULT_COLUMNS = [
     ("feature_id", "Feature", None),
     ("hypsometric_integral_curve", "HI (curve)", "{:.3f}"),
     ("hypsometric_integral_formula", "HI (formula)", "{:.3f}"),
+    ("diameter_km", "D (km)", "{:.2f}"),
     ("d_over_D", "d/D", "{:.4f}"),
     ("min_elevation", "Min elev.", "{:,.1f}"),
     ("max_elevation", "Max elev.", "{:,.1f}"),
@@ -74,7 +77,9 @@ class HypsometricDialog(QDialog):
         super().__init__(parent)
         self.iface = iface
         self.setWindowTitle("Hypsometric Analysis Toolkit")
-        self.setMinimumSize(780, 680)
+        # small, so the dialog can be resized freely; the content scrolls
+        self.setMinimumSize(360, 240)
+        self.resize(960, 800)
 
         self._feedback = None
         self._running = False
@@ -95,7 +100,20 @@ class HypsometricDialog(QDialog):
     # ------------------------------------------------------------------ UI
 
     def _build_ui(self):
-        main = QVBoxLayout(self)
+        # Everything lives inside a scroll area, so the dialog can be made
+        # any size and the content stays reachable on both axes.
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.scroll_area.setFrameShape(QScrollArea.NoFrame)
+        contents = QWidget()
+        self.scroll_area.setWidget(contents)
+        outer.addWidget(self.scroll_area)
+
+        main = QVBoxLayout(contents)
 
         # --- inputs
         input_group = QGroupBox("Input")
@@ -205,6 +223,8 @@ class HypsometricDialog(QDialog):
         self.table.setHorizontalHeaderLabels([c[1] for c in RESULT_COLUMNS])
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.table.setMinimumHeight(120)
+        self.table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.tabs.addTab(self.table, "Results")
 
         self.plot_label = QLabel("Run the analysis to see the curves plot.")
@@ -217,6 +237,7 @@ class HypsometricDialog(QDialog):
         self.log_edit = QPlainTextEdit()
         self.log_edit.setReadOnly(True)
         self.tabs.addTab(self.log_edit, "Log")
+        self.tabs.setMinimumHeight(180)
         main.addWidget(self.tabs, 1)
 
         # --- post-processing hint
