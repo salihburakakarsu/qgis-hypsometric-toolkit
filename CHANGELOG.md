@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.7.3
+
+- **Fixed: small craters measured too shallow.** The rim elevation is read off
+  a radial bin fixed at 0.2 km, which is 2% of a 20 km crater's radius but 40%
+  of a 1 km crater's — wide enough to average the crest away. On a synthetic
+  1 km crater built to Pike (1977) this understated d/D by 14%. The bin now
+  scales to the crater, capped at the scripts' 0.2 km, so craters of 10 km and
+  up are measured exactly as before and the error at 1 km drops to 5%.
+- Added three synthetic lunar reference craters to `dev/make_test_data.py`
+  (1 km and 5 km simple, 25 km complex), built from the Pike (1977) depth, rim
+  height and floor diameter relations rather than from arbitrary gaussians, in
+  the Moon's equirectangular frame. Simple craters are parabolic bowls;
+  the complex one has a flat floor, terraced walls and a central peak. Their
+  d/D is what the literature expects for their size, so they can be used to
+  check the measurement rather than only the plumbing.
+
 ## 1.7.2
 
 - **Fixed: a small crater seeded by a polygon was measured badly.** A 1.27 km

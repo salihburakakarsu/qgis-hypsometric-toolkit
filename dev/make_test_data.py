@@ -13,6 +13,7 @@ with QGIS:
     /Applications/QGIS-LTR.app/Contents/MacOS/bin/python3 dev/make_test_data.py out/
 """
 
+import math
 import os
 import sys
 
@@ -218,6 +219,123 @@ def generate_mixed_craters(outdir, name="mixed_craters.tif"):
         return (origin_x + cx, origin_y + cy, rim_r)
 
     return path, to_map(*craters[0]), to_map(*craters[1])
+
+
+# ---------------------------------------------------------- lunar craters
+
+MOON_RADIUS = 1737400.0
+MOON_PROJ = (f"+proj=eqc +lat_ts=0 +lat_0=0 +lon_0=0 +R={MOON_RADIUS} "
+             "+units=m +no_defs")
+# Pike (1977) splits the lunar simple/complex branches near 15 km.
+LUNAR_TRANSITION_KM = 15.0
+
+
+def pike_depth_km(diameter_km):
+    """Pike (1977) rim-to-floor depth for a fresh lunar crater."""
+    if diameter_km < LUNAR_TRANSITION_KM:
+        return 0.196 * diameter_km ** 1.010, "simple"
+    return 1.044 * diameter_km ** 0.301, "complex"
+
+
+def pike_rim_height_km(diameter_km):
+    """Pike (1977) rim crest height above the surrounding plain."""
+    if diameter_km < LUNAR_TRANSITION_KM:
+        return 0.036 * diameter_km ** 1.014
+    return 0.236 * diameter_km ** 0.399
+
+
+def pike_floor_diameter_km(diameter_km):
+    """Pike (1977) flat-floor diameter of a complex crater."""
+    return 0.187 * diameter_km ** 1.249
+
+
+def generate_lunar_crater(outdir, diameter_km, pixel=None, name=None,
+                          plain=-1000.0, central_peak_fraction=0.33):
+    """
+    One synthetic lunar crater whose morphology follows Pike (1977).
+
+    Built from the published depth, rim height and floor diameter rather than
+    from arbitrary gaussians, so its depth/diameter ratio is what the
+    literature expects for that size: about 0.20 for a simple crater, falling
+    with size once complex.
+
+    Simple craters are parabolic bowls. Complex craters get a flat floor, a
+    terraced wall and a central peak. Both carry an ejecta blanket decaying as
+    r^-3 outside the rim, and sit in the Moon's equirectangular frame.
+
+    Returns (path, info) where info records the ground truth.
+    """
+    radius = diameter_km * 1000.0 / 2.0
+    depth_km, kind = pike_depth_km(diameter_km)
+    depth = depth_km * 1000.0
+    rim_height = pike_rim_height_km(diameter_km) * 1000.0
+    rim_z = plain + rim_height
+    floor_z = rim_z - depth
+
+    pixel = pixel or max(radius / 100.0, 1.0)
+    half = radius * 3.2
+    n = int(2 * half / pixel)
+    axis = (np.arange(n) + 0.5) * pixel - half
+    x, y = np.meshgrid(axis, axis)
+    r = np.hypot(x, y)
+    z = np.full(r.shape, plain, dtype=float)
+
+    if kind == "simple":
+        bowl = r <= radius
+        z[bowl] = floor_z + (rim_z - floor_z) * (r[bowl] / radius) ** 2
+    else:
+        floor_radius = pike_floor_diameter_km(diameter_km) * 1000.0 / 2.0
+        wall = (r > floor_radius) & (r <= radius)
+        span = (r[wall] - floor_radius) / (radius - floor_radius)
+        # A monotone staircase: terraces are flat benches, so they do not add
+        # local maxima that a rim detector could mistake for the crest.
+        steps, amplitude = 4.0, 0.75
+        benched = span - (amplitude / (2 * math.pi * steps)) * np.sin(
+            2 * math.pi * steps * span)
+        benched = (benched - benched.min()) / (benched.max() - benched.min())
+        z[wall] = floor_z + (rim_z - floor_z) * benched ** 1.4
+        z[r <= floor_radius] = floor_z
+        peak_radius = floor_radius * 0.30
+        z += ((central_peak_fraction * depth)
+              * np.exp(-(r / peak_radius) ** 2) * (r <= floor_radius))
+
+    outside = r > radius
+    z[outside] = plain + rim_height * (radius / r[outside]) ** 3
+
+    os.makedirs(outdir, exist_ok=True)
+    name = name or f"lunar_{diameter_km:g}km_{kind}.tif"
+    path = os.path.join(outdir, name)
+    srs = osr.SpatialReference()
+    srs.ImportFromProj4(MOON_PROJ)
+    ds = gdal.GetDriverByName("GTiff").Create(path, n, n, 1, gdal.GDT_Float32)
+    ds.SetGeoTransform((-half, pixel, 0, half, 0, -pixel))
+    ds.SetProjection(srs.ExportToWkt())
+    ds.GetRasterBand(1).WriteArray(z.astype(np.float32))
+    ds.FlushCache()
+    ds = None
+
+    return path, {
+        "diameter_km": diameter_km,
+        "kind": kind,
+        "depth_m": depth,
+        "d_over_D": depth_km / diameter_km,
+        "rim_height_m": rim_height,
+        "rim_elev_m": rim_z,
+        "floor_elev_m": floor_z,
+        "centre_x": 0.0,
+        "centre_y": 0.0,
+        "radius_m": radius,
+        "pixel_m": pixel,
+    }
+
+
+LUNAR_CRATERS = ((1.0, 5.0), (5.0, 20.0), (25.0, 50.0))
+
+
+def generate_lunar_craters(outdir):
+    """The three reference craters: 1 km and 5 km simple, 25 km complex."""
+    return [generate_lunar_crater(outdir, diameter, pixel)
+            for diameter, pixel in LUNAR_CRATERS]
 
 
 def main():

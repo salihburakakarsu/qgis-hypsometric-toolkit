@@ -425,6 +425,61 @@ def main():
              and written["source"] == "polygon 1"
              and written["quality"] == seeded["quality"])
 
+    # ------------------------------------------------- lunar reference craters
+    check.section("Lunar reference craters (Pike 1977)")
+    lunar_dir = os.path.join(OUTPUT_DIR, "test_data", "lunar")
+    for lunar_path, truth in make_test_data.generate_lunar_craters(lunar_dir):
+        tag = f"{truth['diameter_km']:g} km {truth['kind']}"
+        z_lunar, geo_lunar = rim.read_dem(lunar_path, 1)
+        lunar_fit = rim.detect_rim(z_lunar, geo_lunar, n_azimuths=24)
+        lunar_m = morphometry.compute(z_lunar, geo_lunar, lunar_fit)
+
+        check.ok(f"{tag}: diameter is recovered",
+                 abs(lunar_m["diameter_km"] - truth["diameter_km"])
+                 / truth["diameter_km"] < 0.05,
+                 f"got {lunar_m['diameter_km']:.2f} km")
+        # The measurement reads a smoothed rim crest and a percentile floor, so
+        # it sits a few percent under the modelled value by construction.
+        error = ((lunar_m["d_over_D"] - truth["d_over_D"])
+                 / truth["d_over_D"])
+        check.ok(f"{tag}: d/D is within 8% of Pike 1977",
+                 abs(error) < 0.08,
+                 f"got {lunar_m['d_over_D']:.3f} vs {truth['d_over_D']:.3f} "
+                 f"({error * 100:+.1f}%)")
+        check.ok(f"{tag}: the fit is clean",
+                 lunar_m["rim_confidence"] == "ok"
+                 and lunar_m["rays_found"] == "24/24",
+                 f"{lunar_m['rays_found']} {lunar_m['rim_confidence']}")
+        check.ok(f"{tag}: Pike's branch is identified correctly",
+                 lunar_m["pike_branch"] == truth["kind"],
+                 lunar_m["pike_branch"])
+        check.ok(f"{tag}: it is built on the Moon, not the Earth",
+                 abs(crs_check.body_radius(
+                     QgsRasterLayer(lunar_path, tag).crs())
+                     - make_test_data.MOON_RADIUS) < 1.0)
+
+    # The radial bin has to scale, or a small crater's crest is smeared away.
+    small_path, small_truth = make_test_data.generate_lunar_crater(
+        lunar_dir, 1.0, 5.0, name="lunar_step_check.tif")
+    z_step, geo_step = rim.read_dem(small_path, 1)
+    step_fit = rim.detect_rim(z_step, geo_step, n_azimuths=24)
+    scaled = morphometry.compute(z_step, geo_step, step_fit)["d_over_D"]
+    fixed = morphometry.compute(z_step, geo_step, step_fit,
+                                radial_step_km=0.2)["d_over_D"]
+    check.ok("a scaled radial bin beats the fixed 0.2 km one on a 1 km crater",
+             abs(scaled - small_truth["d_over_D"])
+             < abs(fixed - small_truth["d_over_D"]),
+             f"scaled {scaled:.3f} vs fixed {fixed:.3f}, "
+             f"true {small_truth['d_over_D']:.3f}")
+    big_path, _big_truth = make_test_data.generate_lunar_crater(
+        lunar_dir, 25.0, 50.0, name="lunar_step_big.tif")
+    z_big, geo_big = rim.read_dem(big_path, 1)
+    big_fit = rim.detect_rim(z_big, geo_big, n_azimuths=24)
+    check.ok("and a large crater still uses the scripts' 0.2 km bin",
+             morphometry.compute(z_big, geo_big, big_fit)["d_over_D"]
+             == morphometry.compute(z_big, geo_big, big_fit,
+                                    radial_step_km=0.2)["d_over_D"])
+
     # ------------------------------------------- a small crater in a big DEM
     check.section("Small crater in a large raster")
     mixed_path, big, small = make_test_data.generate_mixed_craters(

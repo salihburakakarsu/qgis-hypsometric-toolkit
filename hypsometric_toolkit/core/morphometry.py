@@ -39,6 +39,11 @@ DEFAULTS = {
     "floor_q": 5.0,
     "floor_method": "percentile",
     "radial_step_km": 0.2,
+    # The rim elevation is read off a radial bin. A bin fixed at 0.2 km
+    # spans 40% of a 1 km crater's radius and smears the crest away, so
+    # the bin is scaled to the crater - never coarser than the scripts'
+    # default, so large craters are measured exactly as before.
+    "radial_bins_per_radius": 25,
     "reference_inner": 1.5,
     "reference_outer": 2.2,
 }
@@ -92,6 +97,7 @@ def compute(z, geo, fit, floor_frac=None, floor_q=None, floor_method=None,
     floor_q = DEFAULTS["floor_q"] if floor_q is None else floor_q
     floor_method = (DEFAULTS["floor_method"] if floor_method is None
                     else floor_method)
+    explicit_step = radial_step_km is not None
     step = (DEFAULTS["radial_step_km"] if radial_step_km is None
             else radial_step_km)
 
@@ -105,6 +111,11 @@ def compute(z, geo, fit, floor_frac=None, floor_q=None, floor_method=None,
     if not (0 <= cx < z.shape[1] and 0 <= cy < z.shape[0]):
         raise ValueError("the fitted centre falls outside this raster")
     px, py = geo["px"], geo["py"]
+
+    if not explicit_step:
+        scaled = rim_km / DEFAULTS["radial_bins_per_radius"]
+        floor = 2.0 * max(px, py) / 1000.0
+        step = max(min(step, scaled), floor)
 
     r, centres, mean = rim_module.radial_profile(
         z, cy, cx, px, py, step, rim_module.inscribed_radius(z, cy, cx, px, py))

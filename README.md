@@ -271,7 +271,9 @@ hypsometric_toolkit/       the plugin itself
     ├── crs_check.py       CRS and elevation-step sanity checks
     └── plotting.py        matplotlib and Qt plot renderers
 build_zip.sh               packages the plugin for "Install from ZIP"
-dev/make_test_data.py      generates a synthetic DEM + boundary polygons
+dev/make_test_data.py      synthetic DEMs: landform mix, two-crater and
+                           mixed-size cases, and three lunar reference
+                           craters built from Pike (1977)
 tests/test_plugin.py       headless end-to-end test against a real QGIS
 sample_data/               one example algorithm output CSV
 ```
