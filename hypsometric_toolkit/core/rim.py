@@ -14,6 +14,9 @@ The floor centroid is only a starting guess: for an asymmetric floor it is not
 the geometric centre of the rim, and the refinement matters (one crater in the
 thesis set moved 4.1 km, which was 2 km of diameter and 1 km of depth).
 
+One deliberate difference from the scripts: the radius is measured from the
+final cast's picks, not from the previous pass's (see refine_centre).
+
 The maths is numpy only. Rasters are read with GDAL rather than rasterio, since
 QGIS always ships GDAL (the Hypsometric Curves algorithm itself imports it) but
 does not ship rasterio.
@@ -373,6 +376,16 @@ def refine_centre(z, px, py, n_az=24, passes=3, floor_pct=2.0, cap_km=None,
     cap = cap_km or inscribed_radius(z, cy, cx, px, py)
     rows, _points = cast_all(z, cy, cx, px, py, cap, n_az, smooth)
     radii = [row["rim_km"] for row in rows if row["rim_km"] is not None]
+
+    # The last fit was to picks cast from the previous centre, but the picks
+    # that are traced and drawn are these, cast from the fitted one. Where the
+    # centre is still moving the two sets differ (a 258 m fit for a Lichtenberg
+    # crater whose final picks average 270 m), so measure the radius from
+    # these: the least-squares circle about this centre, whose radius is their
+    # mean distance and whose rms is their spread.
+    if radius is not None and len(radii) >= 5:
+        radius = float(np.mean(radii)) * 1000.0
+        rms = float(np.std(radii)) * 1000.0
 
     return {
         "cy": cy, "cx": cx,

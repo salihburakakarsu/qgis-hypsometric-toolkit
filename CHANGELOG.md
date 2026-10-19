@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.8.1
+
+- **Fixed: the reported diameter could disagree with the rim it drew.** The
+  radius came from the circle fitted on the last pass, to picks cast from the
+  *previous* centre, while the traced outline and the picks shown come from a
+  final cast from the fitted centre. Where the centre was still moving the
+  two differed: a Lichtenberg crater was reported as 258 m across while its
+  own final picks averaged 270 m. The radius and its rms are now measured from
+  the final picks, as the least-squares circle about the final centre. On
+  craters whose centre had settled nothing changes beyond a metre or two.
+  This is a deliberate difference from the standalone scripts, which still
+  report the earlier fit.
+- The traced-outline test compared areas, which a circle of the mean radius
+  can match for a 2:1 ellipse by coincidence. It now compares the outlines:
+  the traced rim sits 27 m from the true ellipse on average, the circle 274 m.
+
 ## 1.8.0
 
 - The Results tab now shows **D (km)** beside d/D, so diameter and the ratio

@@ -318,6 +318,18 @@ def main():
     check.ok("every ray found a crest on a clean synthetic crater",
              whole["n_found"] == whole["n_rays"],
              f"{whole['n_found']}/{whole['n_rays']}")
+    # The radius must describe the picks that are traced and drawn, not the
+    # previous pass's picks the last circle was fitted to. The two differ
+    # while the centre is still moving, so start off-centre with one pass.
+    crater_col, crater_row = rim.from_map(geo_dem, crater_x, crater_y)
+    moving = rim.refine_centre(z_dem, geo_dem["px"], geo_dem["py"], passes=1,
+                               seed=(crater_row + 8, crater_col + 8))
+    final_radii = [row["rim_km"] for row in moving["rows"] if row["rim_km"]]
+    final_mean = sum(final_radii) / len(final_radii)
+    check.ok("the radius is measured from the final rim picks",
+             abs(moving["fit_R_km"] - final_mean) < 1e-9,
+             f"radius {moving['fit_R_km'] * 1000:.3f} m, "
+             f"final picks average {final_mean * 1000:.3f} m")
 
     # The Larmor Q failure mode: two comparable depressions in one raster.
     two_path, crater_a, crater_b = make_test_data.generate_two_craters(
@@ -544,12 +556,23 @@ def main():
     check.ok("the circle fit flags the same rim as non-circular",
              ell["quality"].startswith("NON-CIRCULAR"), ell["quality"])
 
-    true_area_km2 = math.pi * ell_a * ell_b / 1e6
-    circle_error = abs(ell["circle_area_km2"] - true_area_km2)
-    traced_error = abs(ell["traced_area_km2"] - true_area_km2)
-    check.ok("the traced area is closer to the true area than the circle's",
-             traced_error < circle_error,
-             f"traced {traced_error:.3f} vs circle {circle_error:.3f} km2")
+    # Compare outlines, not areas: a circle of the mean radius has nearly the
+    # area of a 2:1 ellipse, but it cannot follow its shape.
+    def ellipse_radius_m(x, y):
+        t = math.atan2(y - ell_y, x - ell_x)
+        return ell_a * ell_b / math.hypot(ell_b * math.cos(t),
+                                          ell_a * math.sin(t))
+
+    traced = ell["traced_points"]
+    traced_error = sum(abs(math.hypot(x - ell_x, y - ell_y)
+                           - ellipse_radius_m(x, y))
+                       for x, y in traced) / len(traced)
+    circle_error = sum(abs(ell["radius_m"] - ellipse_radius_m(x, y))
+                       for x, y in traced) / len(traced)
+    check.ok("the traced outline follows the ellipse far closer than the circle",
+             traced_error < 0.25 * circle_error,
+             f"traced {traced_error:.0f} m vs circle {circle_error:.0f} m "
+             "average distance from the true rim")
     check.ok("the equivalent radius follows from the traced area",
              abs(ell["traced_eq_radius_km"]
                  - math.sqrt(ell["traced_area_km2"] / math.pi)) < 1e-6)
