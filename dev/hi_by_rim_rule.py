@@ -3,10 +3,10 @@
 Hypsometric integral of each crater under each rim rule.
 
 For every crater in a polygon layer this fits the rim with the plugin's crest
-rule and with the slope-threshold rule at each fraction (the same fits as
+rule and with its slope rule at each fraction (the same fits as
 compare_rim_rules.py), writes one circle per crater and rule to a GeoPackage,
 and runs the plugin's own HI analysis on all of them: qgis:hypsometriccurves,
-then core.analysis on each histogram. Nothing in the plugin is changed.
+then core.analysis on each histogram.
 
 It needs QGIS, so run it with the QGIS-bundled Python, e.g. for MacPorts:
 
@@ -99,23 +99,22 @@ def main():
                                                args.fid):
         z, geo = read_around(args.dem, bbox)
         try:
-            _fit, _azimuths, _rays, rules = compare(
-                z, geo, rim.polygon_mask(geo, wkt), sorted(args.fractions))
+            rules = compare(z, geo, rim.polygon_mask(geo, wkt),
+                            sorted(args.fractions))
         except ValueError as exc:
             print(f"crater {crater_fid}: no rim found ({exc})")
             continue
         for rule in rules:
-            circle = rule["circle"]
-            if circle is None:
+            fit = rule["fit"]
+            if fit is None:
                 continue
-            centre_x, centre_y = rim.to_map(geo, circle["cx"], circle["cy"])
-            radius_m = circle["radius_km"] * 1000.0
             circles.append({
                 "crater_fid": crater_fid,
                 "rule": rule["name"],
-                "diameter_m": 2.0 * radius_m,
+                "diameter_m": fit["diameter_km"] * 1000.0,
                 "d_over_D": rule["d_over_D"],
-                "points": rim.circle_points(centre_x, centre_y, radius_m),
+                "points": rim.circle_points(fit["centre_x"], fit["centre_y"],
+                                            fit["radius_m"]),
             })
     if not circles:
         sys.exit("no craters could be fitted")
@@ -144,7 +143,7 @@ def main():
     # 3. one row per crater and rule
     step_heads = "".join(f"  {'HI @' + format(s, 'g') + ' m':>10}"
                          for s in args.steps)
-    print(f"\n{'crater':>6}  {'rule':<20} {'D (m)':>6} {'d/D':>6}"
+    print(f"\n{'crater':>6}  {'rule':<10} {'D (m)':>6} {'d/D':>6}"
           f"{step_heads}  {'relief (m)':>10}")
     previous = None
     for fid, circle in enumerate(circles, start=1):
@@ -162,7 +161,7 @@ def main():
         d_over_d = (f"{circle['d_over_D']:.3f}"
                     if circle["d_over_D"] is not None else "–")
         print(f"{crater if crater != previous else '':>6}  "
-              f"{circle['rule']:<20} {circle['diameter_m']:>6.0f} "
+              f"{circle['rule']:<10} {circle['diameter_m']:>6.0f} "
               f"{d_over_d:>6}{values}  "
               f"{relief if relief is not None else float('nan'):>10.1f}")
         previous = crater

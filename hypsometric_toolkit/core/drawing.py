@@ -84,7 +84,36 @@ RIM_FIELDS = [
     ("n_rays", "int", "n_rays"),
     ("radius_source", "str", "radius_source"),
     ("quality", "str", "quality"),
+    ("rim_rule", "str", "rim_rule"),
+    ("slope_fraction", "double", "slope_fraction"),
 ]
+
+
+def rim_rule_args(feature):
+    """
+    The detect_rim() rule arguments a rim polygon was drawn with.
+
+    Lets a later refit, e.g. for depth, put the rim where the polygon does.
+    Empty for any other polygon, or one written before the rule was
+    recorded, which then gets the defaults.
+    """
+    from . import rim as rim_module
+
+    names = feature.fields().names()
+    if "rim_rule" not in names:
+        return {}
+    rule = feature["rim_rule"]
+    if rule == rim_module.RIM_CREST:
+        return {"rim_rule": rule}
+    if rule != rim_module.RIM_SLOPE or "slope_fraction" not in names:
+        return {}
+    try:
+        fraction = float(feature["slope_fraction"])
+    except (TypeError, ValueError):  # NULL comes back as a QVariant
+        return {}
+    if not 0.0 < fraction < 1.0:
+        return {}
+    return {"rim_rule": rule, "slope_fraction": fraction}
 
 
 def _make_field(name, kind):

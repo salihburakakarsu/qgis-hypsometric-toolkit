@@ -437,6 +437,85 @@ def main():
              and written["source"] == "polygon 1"
              and written["quality"] == seeded["quality"])
 
+    # ------------------------------------------------------ slope-break rule
+    check.section("Slope-break rim rule")
+    check.ok("the crest stays the default rule",
+             rim.DEFAULTS["rim_rule"] == rim.RIM_CREST
+             and whole["rim_rule"] == rim.RIM_CREST
+             and whole["slope_fraction"] is None)
+
+    # slope 1, 5, 10 (steepest), 6, 3, 1.5, 0.5, then turning down: the crest
+    # is index 6, and the wall is below 20% of its steepest from index 5
+    gradient = np.array([1.0, 5.0, 10.0, 6.0, 3.0, 1.5, 0.5, -1.0])
+    check.ok("the slope break is the first point below the fraction",
+             rim.slope_break(gradient, 2, 6, 0.2) == 5)
+    check.ok("and the crest itself if the wall never flattens that much",
+             rim.slope_break(gradient, 2, 6, 0.01) == 6)
+
+    sloped = rim.detect_rim(z_dem, geo_dem, rim_rule=rim.RIM_SLOPE)
+    check.ok("the slope rule puts the rim inside the crest",
+             sloped["radius_m"] < whole["radius_m"],
+             f"slope {sloped['radius_m']:.0f} m, crest {whole['radius_m']:.0f} m")
+    check.ok("but still on the crater wall, not in the bowl",
+             sloped["radius_m"] > 0.6 * whole["radius_m"],
+             f"slope {sloped['radius_m']:.0f} m, crest {whole['radius_m']:.0f} m")
+    check.ok("and on the same crater",
+             math.hypot(sloped["centre_x"] - crater_x,
+                        sloped["centre_y"] - crater_y) < 100.0)
+    check.ok("the fit records its rule",
+             sloped["rim_rule"] == rim.RIM_SLOPE
+             and sloped["slope_fraction"] == rim.DEFAULTS["slope_fraction"]
+             and sloped["rim_rule_label"] == "slope 20%",
+             sloped["rim_rule_label"])
+
+    # Ray by ray from one centre: never past the crest, no crest means no
+    # pick, and a higher fraction pulls the rim further in.
+    cap = rim.inscribed_radius(z_dem, whole["cy"], whole["cx"],
+                               geo_dem["px"], geo_dem["py"])
+    def picks(**rule):
+        rows, _points = rim.cast_all(z_dem, whole["cy"], whole["cx"],
+                                     geo_dem["px"], geo_dem["py"], cap, 24,
+                                     **rule)
+        return [row["rim_km"] for row in rows]
+    crest_picks = picks()
+    gentle = picks(rim_rule=rim.RIM_SLOPE, slope_fraction=0.1)
+    strict = picks(rim_rule=rim.RIM_SLOPE, slope_fraction=0.3)
+    check.ok("on every ray the slope pick is at or inside the crest",
+             all((s is None) == (c is None) and (s is None or s <= c)
+                 for s, c in zip(gentle, crest_picks)))
+    check.ok("and a higher fraction never puts it further out",
+             all(s is None or s <= g for s, g in zip(strict, gentle)))
+
+    check.ok("an unknown rim rule is rejected",
+             _raises_value_error(
+                 lambda: rim.detect_rim(z_dem, geo_dem, rim_rule="edge")))
+    check.ok("and so is a slope fraction outside 0-1",
+             _raises_value_error(
+                 lambda: rim.detect_rim(z_dem, geo_dem,
+                                        rim_rule=rim.RIM_SLOPE,
+                                        slope_fraction=1.5)))
+    check.ok("the depth result names the rule",
+             morphometry.compute(z_dem, geo_dem, sloped)["rim_rule"]
+             == "slope 20%"
+             and morphometry.compute(z_dem, geo_dem, whole)["rim_rule"]
+             == rim.RIM_CREST)
+
+    # a rim polygon carries its rule, so a later refit can use it again
+    check.ok("a slope-rule rim is written with its rule",
+             drawing.add_rim_polygon(rim_layer, sloped, "polygon 2") == 2)
+    by_source = {f["source"]: f for f in rim_layer.getFeatures()}
+    check.ok("the crest polygon gives back the crest rule",
+             drawing.rim_rule_args(by_source["polygon 1"])
+             == {"rim_rule": rim.RIM_CREST},
+             str(drawing.rim_rule_args(by_source["polygon 1"])))
+    slope_args = drawing.rim_rule_args(by_source["polygon 2"])
+    check.ok("the slope polygon gives back its rule and fraction",
+             slope_args.get("rim_rule") == rim.RIM_SLOPE
+             and abs(slope_args.get("slope_fraction", 0) - 0.2) < 1e-9,
+             str(slope_args))
+    check.ok("a polygon from any other layer gets the defaults",
+             drawing.rim_rule_args(next(boundary.getFeatures())) == {})
+
     # ------------------------------------------------- lunar reference craters
     check.section("Lunar reference craters (Pike 1977)")
     lunar_dir = os.path.join(OUTPUT_DIR, "test_data", "lunar")
@@ -965,6 +1044,15 @@ def main():
              f"got {options.values()['downsample']}")
     check.ok("and shows the resulting grid size",
              "pixels" in options.grid_label.text(), options.grid_label.text())
+    check.ok("it defaults to the crest, with the fraction set to 20%",
+             options.values()["rim_rule"] == rim.RIM_CREST
+             and abs(options.values()["slope_fraction"] - 0.2) < 1e-9
+             and not options.fraction_spin.isEnabled())
+    options.rule_combo.setCurrentIndex(
+        options.rule_combo.findData(rim.RIM_SLOPE))
+    check.ok("choosing the slope break enables the fraction and returns it",
+             options.fraction_spin.isEnabled()
+             and options.values()["rim_rule"] == rim.RIM_SLOPE)
     options.deleteLater()
 
     dlg.morphometry_check.setChecked(True)

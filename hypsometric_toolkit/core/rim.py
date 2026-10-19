@@ -42,6 +42,15 @@ RAY_CAP_FACTOR = 2.5
 MIN_FEATURE_PX = 150
 MAX_PIXELS = 30_000_000
 
+# Where on each ray the rim is put. The crest is the scripts' rule: the first
+# turnover outward of the steepest wall. On a degraded crater the rim is a
+# soft shoulder on nearly flat ground, so where it turns over is decided by
+# small bumps out on the flat and the crest lands too far out. The slope rule
+# stops where the wall has flattened to a fraction of its steepest slope.
+RIM_CREST = "crest"
+RIM_SLOPE = "slope"
+RIM_RULES = (RIM_CREST, RIM_SLOPE)
+
 # Script defaults, kept identical so results are comparable.
 DEFAULTS = {
     "downsample": 12,
@@ -51,6 +60,10 @@ DEFAULTS = {
     "smooth": 9,
     "min_rays": 12,
     "max_rms_frac": 0.08,
+    "rim_rule": RIM_CREST,
+    # 15-20% gave the same HI on Lichtenberg craters, and 20% matched the
+    # rim of a degraded one picked by eye
+    "slope_fraction": 0.2,
 }
 
 
@@ -280,9 +293,33 @@ def inscribed_radius(z, cy, cx, px, py):
                cy * py, (z.shape[0] - cy) * py) / 1000.0
 
 
-def ray_rim(z, cy, cx, dy, dx, px, py, cap_km, smooth=9):
+def rim_rule_label(rim_rule, slope_fraction=None):
+    """Short name for a rim rule, as written to the outputs."""
+    if rim_rule == RIM_SLOPE:
+        return f"slope {slope_fraction:.0%}"
+    return rim_rule
+
+
+def slope_break(gradient, k_wall, k_crest, fraction):
     """
-    Rim crest along one ray: the first turnover outward of the steepest wall.
+    Where the wall flattens out, between the steepest wall and the crest.
+
+    The first sample outward of the steepest wall whose slope is below
+    `fraction` of the steepest slope, or the crest itself if the wall does not
+    flatten that much before it. It never goes past the crest, and a ray with
+    no crest gets no pick, so a ray running on into a neighbouring hill
+    cannot put the rim far outside the crater.
+    """
+    limit = fraction * gradient[k_wall]
+    below = np.flatnonzero(gradient[k_wall:k_crest + 1] < limit)
+    return k_wall + int(below[0]) if below.size else k_crest
+
+
+def ray_rim(z, cy, cx, dy, dx, px, py, cap_km, smooth=9, rim_rule=RIM_CREST,
+            slope_fraction=DEFAULTS["slope_fraction"]):
+    """
+    Rim along one ray: the first turnover outward of the steepest wall, or
+    with RIM_SLOPE the point before it where the wall has flattened out.
 
     Returns (rim_dist_km, rim_elev_m, reach_km), or (None, reason, reach_km).
     """
@@ -323,17 +360,21 @@ def ray_rim(z, cy, cx, dy, dx, px, py, cap_km, smooth=9):
     k_wall = int(np.argmax(np.where(inner, gradient, -np.inf)))
     for i in range(k_wall, len(gradient) - 1):
         if gradient[i] >= 0 > gradient[i + 1]:
+            if rim_rule == RIM_SLOPE:
+                i = slope_break(gradient, k_wall, i, slope_fraction)
             return float(dist[i]), float(prof[i]), reach
     return None, "no crest within reach", reach
 
 
-def cast_all(z, cy, cx, px, py, cap_km, n_az, smooth=9):
+def cast_all(z, cy, cx, px, py, cap_km, n_az, smooth=9, rim_rule=RIM_CREST,
+             slope_fraction=DEFAULTS["slope_fraction"]):
     """Rim pick on every azimuth. 0 degrees = north, increasing clockwise."""
     rows, points = [], []
     for az in np.arange(0, 360, 360 / n_az):
         theta = math.radians(float(az))
         dx, dy = math.sin(theta), -math.cos(theta)
-        r_km, z_m, reach = ray_rim(z, cy, cx, dy, dx, px, py, cap_km, smooth)
+        r_km, z_m, reach = ray_rim(z, cy, cx, dy, dx, px, py, cap_km, smooth,
+                                   rim_rule, slope_fraction)
         rows.append({"azimuth": float(az), "rim_km": r_km, "rim_z": z_m,
                      "reach_km": reach})
         if r_km is not None:
@@ -354,9 +395,13 @@ def fit_circle(points, px, py):
 
 
 def refine_centre(z, px, py, n_az=24, passes=3, floor_pct=2.0, cap_km=None,
-                  smooth=9, seed=None):
+                  smooth=9, seed=None, rim_rule=RIM_CREST,
+                  slope_fraction=DEFAULTS["slope_fraction"]):
     """
     Floor centroid, then iterated circle fits to the rim picks.
+
+    `rim_rule` and `slope_fraction` say where on each ray the rim is picked
+    (see ray_rim); the centre is fitted to those same picks.
 
     A large `shift_km` means the floor centroid was a poor centre; a large
     `fit_rms_km` means the rim is not circular (oblique impact, or a bad
@@ -368,13 +413,15 @@ def refine_centre(z, px, py, n_az=24, passes=3, floor_pct=2.0, cap_km=None,
     radius = rms = None
     for _ in range(max(int(passes), 0)):
         cap = cap_km or inscribed_radius(z, cy, cx, px, py)
-        _rows, points = cast_all(z, cy, cx, px, py, cap, n_az, smooth)
+        _rows, points = cast_all(z, cy, cx, px, py, cap, n_az, smooth,
+                                 rim_rule, slope_fraction)
         if len(points) < 5:
             break
         cx, cy, radius, rms = fit_circle(points, px, py)
 
     cap = cap_km or inscribed_radius(z, cy, cx, px, py)
-    rows, _points = cast_all(z, cy, cx, px, py, cap, n_az, smooth)
+    rows, _points = cast_all(z, cy, cx, px, py, cap, n_az, smooth,
+                             rim_rule, slope_fraction)
     radii = [row["rim_km"] for row in rows if row["rim_km"] is not None]
 
     # The last fit was to picks cast from the previous centre, but the picks
@@ -462,7 +509,8 @@ def detect_rim(z, geo, mask=None, n_azimuths=DEFAULTS["n_azimuths"],
                passes=DEFAULTS["passes"], floor_pct=DEFAULTS["floor_pct"],
                min_rays=DEFAULTS["min_rays"],
                max_rms_frac=DEFAULTS["max_rms_frac"],
-               smooth=DEFAULTS["smooth"]):
+               smooth=DEFAULTS["smooth"], rim_rule=DEFAULTS["rim_rule"],
+               slope_fraction=DEFAULTS["slope_fraction"]):
     """
     Find the crater centre and fit its rim circle.
 
@@ -471,9 +519,20 @@ def detect_rim(z, geo, mask=None, n_azimuths=DEFAULTS["n_azimuths"],
     DEM holding several. Without it the deepest feature in the whole raster is
     found, which is the standalone script's behaviour.
 
+    `rim_rule` is RIM_CREST (the scripts' rule) or RIM_SLOPE, which puts the
+    rim where the wall has flattened to `slope_fraction` of its steepest
+    slope; see ray_rim.
+
     Returns a dict with the fit plus map-space centre and radius, or raises
     ValueError when no rim could be found.
     """
+    if rim_rule not in RIM_RULES:
+        raise ValueError(f"unknown rim rule {rim_rule!r}; use one of "
+                         + ", ".join(RIM_RULES))
+    if rim_rule == RIM_SLOPE and not 0.0 < slope_fraction < 1.0:
+        raise ValueError("the slope fraction must be between 0 and 1, "
+                         f"got {slope_fraction}")
+
     # A polygon selects which crater to measure, by seeding the search inside
     # it. The rays themselves run on the whole raster: confining them to the
     # polygon truncates every profile at its edge, and a polygon drawn round a
@@ -497,7 +556,8 @@ def detect_rim(z, geo, mask=None, n_azimuths=DEFAULTS["n_azimuths"],
 
     fit = refine_centre(z, geo["px"], geo["py"], n_az=n_azimuths,
                         passes=passes, floor_pct=floor_pct, smooth=smooth,
-                        seed=seed, cap_km=cap_km)
+                        seed=seed, cap_km=cap_km, rim_rule=rim_rule,
+                        slope_fraction=slope_fraction)
 
     rim_km = fit["fit_R_km"] or fit["median_rim_km"]
     if not rim_km:
@@ -549,6 +609,9 @@ def detect_rim(z, geo, mask=None, n_azimuths=DEFAULTS["n_azimuths"],
         "diameter_km": rim_km * 2.0,
         "radius_source": "circle fit" if fit["fit_R_km"] else "ray median",
         "quality": quality_flag(fit, rim_km, min_rays, max_rms_frac),
+        "rim_rule": rim_rule,
+        "slope_fraction": slope_fraction if rim_rule == RIM_SLOPE else None,
+        "rim_rule_label": rim_rule_label(rim_rule, slope_fraction),
     })
     return result
 

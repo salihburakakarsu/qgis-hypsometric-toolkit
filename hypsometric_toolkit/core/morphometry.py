@@ -65,6 +65,7 @@ FIELDS = [
     "rim_fit_rms_km",
     "rays_found",
     "rim_confidence",
+    "rim_rule",
 ]
 
 
@@ -170,4 +171,5 @@ def compute(z, geo, fit, floor_frac=None, floor_q=None, floor_method=None,
                            if fit.get("fit_rms_km") is not None else None),
         "rays_found": f"{fit['n_found']}/{fit['n_rays']}",
         "rim_confidence": fit.get("quality"),
+        "rim_rule": fit.get("rim_rule_label", rim_module.RIM_CREST),
     }

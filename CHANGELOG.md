@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.9.0
+
+- **New rim rule: slope break.** *Detect rim* can now put the rim where the
+  wall has flattened to a fraction of its steepest slope (20% by default)
+  instead of at the crest, never past the crest. A degraded crater's rim is a
+  soft shoulder on nearly flat ground, so its crest lands too far out, on the
+  flat: on a degraded 290 m Lichtenberg crater the slope break moved the rim
+  about 20 m inward on each side, onto the edge picked by eye. The crest stays
+  the default, so existing results do not change.
+- With the slope break the centre is also fitted to the slope picks. On one
+  Lichtenberg crater whose crest picks scattered over a wider low area
+  (NON-CIRCULAR, rms 98 m) this found the clear 362 m bowl inside it (rms
+  13 m, ok).
+- The rule is recorded on each rim polygon (`rim_rule`, `slope_fraction`), in
+  the log, and in the summary CSV (`rim_rule`). A depth measurement that has
+  to refit a rim polygon uses the polygon's own rule.
+- `dev/compare_rim_rules.py` and `dev/hi_by_rim_rule.py` now call the plugin's
+  rule instead of a copy of it, so their numbers are the plugin's.
+
 ## 1.8.1
 
 - **Fixed: the reported diameter could disagree with the rim it drew.** The

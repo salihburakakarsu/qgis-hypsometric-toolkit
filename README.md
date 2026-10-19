@@ -99,6 +99,8 @@ ordinary morphometry — this is what makes that comparison possible.
 
 It uses the rim fitted by *Detect rim* when there is one, and otherwise fits one
 inside each boundary polygon, so it works with drawn and prepared polygons too.
+That refit uses the rim rule recorded on a `Crater_rim` polygon, and the crest
+for any other polygon.
 
 Several different quantities get loosely called "depth", so each is reported
 separately rather than one being chosen:
@@ -171,6 +173,27 @@ not need full resolution. Each ray needs at least 30 samples, though, so too
 high a value finds nothing; the default is scaled to the raster (12 for a NAC
 DTM of tens of thousands of pixels, 1–3 for a small one), the dialog shows the
 grid it produces, and an over-coarse choice says so rather than failing quietly.
+
+**Rim at** sets where on each ray the rim is picked:
+
+- **Crest** (the default) — where the ground stops rising, outward of the
+  steepest wall. This is the standalone scripts' rule and what most published
+  diameters use.
+- **Slope break** — where the wall has flattened to a fraction of its
+  steepest slope (*Flat below*, 20% by default), never past the crest. A
+  degraded crater's rim is a soft shoulder on nearly flat ground, so where it
+  turns over is decided by small bumps out on the flat and the crest lands too
+  far out. On a degraded 290 m Lichtenberg crater the slope break at 20%
+  moved the rim about 20 m inward on each side, onto the edge picked by eye.
+  The fraction is relative to each crater's own wall, so one value suits
+  small and large craters; 15% and 20% gave the same HI there.
+
+The slope break gives a smaller diameter, and so a larger d/D, than the crest
+on the same crater — compare like with like. The rule used is recorded on
+each rim polygon (`rim_rule`, `slope_fraction`) and in the summary CSV
+(`rim_rule`), and a later depth measurement refits with the polygon's own
+rule. `dev/compare_rim_rules.py` plots both rules on your own craters, and
+`dev/hi_by_rim_rule.py` runs the HI analysis under each.
 
 **The rim outline** can be a fitted circle, a traced rim, or both:
 
