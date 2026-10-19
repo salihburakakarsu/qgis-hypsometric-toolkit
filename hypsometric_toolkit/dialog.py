@@ -400,6 +400,9 @@ class HypsometricDialog(QDialog):
             "n_azimuths": params["n_azimuths"],
             "passes": params["passes"],
             "floor_pct": params["floor_pct"],
+            "rim_rule": params.get("rim_rule", rim.DEFAULTS["rim_rule"]),
+            "slope_fraction": params.get("slope_fraction",
+                                         rim.DEFAULTS["slope_fraction"]),
         }
         auto = params.get("auto_downsample", True)
 
@@ -459,7 +462,8 @@ class HypsometricDialog(QDialog):
                 if drawing.add_rim_polygon(layer, result, label, one_shape) < 0:
                     self._log(f"{label}: could not build the {one_shape} outline")
             self._log(
-                f"{label}: D = {result['diameter_km']:.2f} km, "
+                f"{label}: {result['rim_rule_label']} rim, "
+                f"D = {result['diameter_km']:.2f} km, "
                 f"centre shift {result['shift_km']:.2f} km, "
                 f"rms {result['fit_rms_km']:.3f} km, "
                 f"{result['n_found']}/{result['n_rays']} rays, "
@@ -970,8 +974,12 @@ class HypsometricDialog(QDialog):
                 (z, geo), _factor = self._read_around(dem, source, geometry)
                 fit = self._rim_fits.get((boundary.id(), fid))
                 if fit is None:
+                    # a rim polygon records the rule that drew it, so the
+                    # refit puts the rim in the same place
                     mask = rim.polygon_mask(geo, geometry.asWkt())
-                    fit = rim.detect_rim(z, geo, mask=mask)
+                    fit = rim.detect_rim(
+                        z, geo, mask=mask,
+                        **drawing.rim_rule_args(features[fid]))
                     self._rim_fits[(boundary.id(), fid)] = fit
                 result.update(morphometry.compute(z, geo, fit))
                 measured += 1

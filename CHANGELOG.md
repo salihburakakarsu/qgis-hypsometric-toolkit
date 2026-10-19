@@ -1,5 +1,40 @@
 # Changelog
 
+## 1.9.0
+
+- **New rim rule: slope break.** *Detect rim* can now put the rim where the
+  wall has flattened to a fraction of its steepest slope (20% by default)
+  instead of at the crest, never past the crest. A degraded crater's rim is a
+  soft shoulder on nearly flat ground, so its crest lands too far out, on the
+  flat: on a degraded 290 m Lichtenberg crater the slope break moved the rim
+  about 20 m inward on each side, onto the edge picked by eye. The crest stays
+  the default, so existing results do not change.
+- With the slope break the centre is also fitted to the slope picks. On one
+  Lichtenberg crater whose crest picks scattered over a wider low area
+  (NON-CIRCULAR, rms 98 m) this found the clear 362 m bowl inside it (rms
+  13 m, ok).
+- The rule is recorded on each rim polygon (`rim_rule`, `slope_fraction`), in
+  the log, and in the summary CSV (`rim_rule`). A depth measurement that has
+  to refit a rim polygon uses the polygon's own rule.
+- `dev/compare_rim_rules.py` and `dev/hi_by_rim_rule.py` now call the plugin's
+  rule instead of a copy of it, so their numbers are the plugin's.
+
+## 1.8.1
+
+- **Fixed: the reported diameter could disagree with the rim it drew.** The
+  radius came from the circle fitted on the last pass, to picks cast from the
+  *previous* centre, while the traced outline and the picks shown come from a
+  final cast from the fitted centre. Where the centre was still moving the
+  two differed: a Lichtenberg crater was reported as 258 m across while its
+  own final picks averaged 270 m. The radius and its rms are now measured from
+  the final picks, as the least-squares circle about the final centre. On
+  craters whose centre had settled nothing changes beyond a metre or two.
+  This is a deliberate difference from the standalone scripts, which still
+  report the earlier fit.
+- The traced-outline test compared areas, which a circle of the mean radius
+  can match for a 2:1 ellipse by coincidence. It now compares the outlines:
+  the traced rim sits 27 m from the true ellipse on average, the circle 274 m.
+
 ## 1.8.0
 
 - The Results tab now shows **D (km)** beside d/D, so diameter and the ratio

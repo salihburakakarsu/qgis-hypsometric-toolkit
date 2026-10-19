@@ -7,6 +7,7 @@ fitted there are the same measurement.
 
 from qgis.PyQt.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
@@ -42,7 +43,7 @@ class RimOptionsDialog(QDialog):
         intro = QLabel(
             "Finds the crater centre and fits a circle to its rim: a floor "
             "centroid seeds the search, rays are cast on each azimuth to pick "
-            "the rim crest, and a least-squares circle is refit a few times."
+            "the rim, and a least-squares circle is refit a few times."
         )
         intro.setWordWrap(True)
         layout.addWidget(intro)
@@ -88,6 +89,39 @@ class RimOptionsDialog(QDialog):
 
         params = QGroupBox("Detection")
         form = QFormLayout(params)
+
+        # two compact rows rather than a group of their own: the dialog is
+        # already close to a laptop screen's height
+        self.rule_combo = QComboBox()
+        self.rule_combo.addItem("Crest — where the ground stops rising",
+                                rim.RIM_CREST)
+        self.rule_combo.addItem("Slope break — where the wall flattens out",
+                                rim.RIM_SLOPE)
+        self.rule_combo.setCurrentIndex(
+            self.rule_combo.findData(rim.DEFAULTS["rim_rule"]))
+        self.rule_combo.setToolTip(
+            "Where on each ray the rim is picked. The crest is the scripts' "
+            "rule and what most published diameters use. A degraded crater's "
+            "rim is a soft shoulder on nearly flat ground, so its crest lands "
+            "too far out, on the flat; the slope break stops where the wall "
+            "has flattened out, never past the crest, and gives a smaller "
+            "diameter."
+        )
+        form.addRow("Rim at:", self.rule_combo)
+
+        self.fraction_spin = QDoubleSpinBox()
+        self.fraction_spin.setRange(1.0, 90.0)
+        self.fraction_spin.setDecimals(0)
+        self.fraction_spin.setSingleStep(5.0)
+        self.fraction_spin.setValue(rim.DEFAULTS["slope_fraction"] * 100.0)
+        self.fraction_spin.setSuffix(" % of the steepest wall slope")
+        self.fraction_spin.setToolTip(
+            "Slope break only: the rim is put where the slope first drops "
+            "below this share of the wall's steepest slope. Higher pulls the "
+            "rim further in.")
+        self.rule_combo.currentIndexChanged.connect(self._update_fraction)
+        self._update_fraction()
+        form.addRow("Flat below:", self.fraction_spin)
 
         self.rays_spin = QSpinBox()
         self.rays_spin.setRange(8, 360)
@@ -153,6 +187,11 @@ class RimOptionsDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
+    def _update_fraction(self):
+        """The fraction only means something for the slope break."""
+        self.fraction_spin.setEnabled(
+            self.rule_combo.currentData() == rim.RIM_SLOPE)
+
     def _update_grid_label(self):
         """Show what the chosen downsample actually leaves to work with."""
         if not self._dem_size:
@@ -184,4 +223,6 @@ class RimOptionsDialog(QDialog):
             "passes": self.passes_spin.value(),
             "floor_pct": self.floor_spin.value(),
             "downsample": self.downsample_spin.value(),
+            "rim_rule": self.rule_combo.currentData(),
+            "slope_fraction": self.fraction_spin.value() / 100.0,
         }
