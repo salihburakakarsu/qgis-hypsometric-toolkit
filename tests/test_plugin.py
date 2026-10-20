@@ -251,7 +251,7 @@ def main():
     check.section("Drawn boundary polygons")
     import numpy as np
     from qgis.core import (QgsCoordinateReferenceSystem, QgsFeature,
-                           QgsGeometry, QgsPointXY, QgsProject)
+                           QgsGeometry, QgsPointXY, QgsProject, QgsRectangle)
 
     def square(cx, cy, half):
         return QgsGeometry.fromPolygonXY([[
@@ -986,6 +986,24 @@ def main():
              and QgsProject.instance().mapLayer(dlg._drawn_layer.id()) is not None)
     check.ok("the drawn layer is selected as the boundary layer",
              dlg.boundary_combo.currentLayer() is dlg._drawn_layer)
+    check.ok("drawing switches editing on for the layer",
+             dlg._drawn_layer.isEditable())
+
+    # Real clicks on the map: the digitizing tool ignores them ("Layer not
+    # editable") unless the layer is in edit mode, which the other checks
+    # here cannot see because they hand it a finished polygon.
+    from qgis.PyQt.QtCore import QEvent, QPoint, Qt
+    from qgis.gui import QgsMapMouseEvent
+    canvas.resize(400, 400)
+    canvas.setExtent(QgsRectangle(500000, 7300000, 503000, 7303000))
+    for x, y in ((50, 50), (300, 60)):
+        dlg._draw_tool.canvasReleaseEvent(QgsMapMouseEvent(
+            canvas, QEvent.MouseButtonRelease, QPoint(x, y), Qt.LeftButton,
+            Qt.LeftButton, Qt.NoModifier))
+    check.ok("clicks on the map are captured without Toggle Editing",
+             dlg._draw_tool.size() == 2,
+             f"captured {dlg._draw_tool.size()} of 2 clicks")
+    dlg._draw_tool.clean()
 
     digitized = QgsFeature()
     digitized.setGeometry(square(500750, 7302250, 500))
@@ -998,12 +1016,25 @@ def main():
     canvas.setMapTool(QgsMapToolPan(canvas))
     check.ok("switching map tools in QGIS untoggles the button",
              not dlg.draw_btn.isChecked() and dlg._draw_tool is None)
+    check.ok("and switches editing off again, keeping the polygons",
+             not dlg._drawn_layer.isEditable()
+             and dlg._drawn_layer.featureCount() == 2)
 
     dlg.draw_btn.setChecked(True)
     check.ok("restarting drawing reuses the existing layer",
              dlg._drawn_layer.featureCount() == 2)
     dlg._stop_drawing()
     check.ok("stopping drawing releases the map tool", dlg._draw_tool is None)
+    check.ok("and ends the edit session it started",
+             not dlg._drawn_layer.isEditable())
+
+    # editing the user switched on themselves is theirs to end
+    dlg._drawn_layer.startEditing()
+    dlg.draw_btn.setChecked(True)
+    dlg._stop_drawing()
+    check.ok("an edit session the user started is left open",
+             dlg._drawn_layer.isEditable())
+    dlg._drawn_layer.rollBack()
 
     # ----------------------------------------------------- detect rim button
     check.section("Detect rim button")

@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.9.1
+
+- **Fixed: Draw polygon needed Toggle Editing before it would draw.** The
+  digitizing tool ignores clicks on a layer that is not in edit mode ("Layer
+  not editable"), and the drawn layer was never put in it. Drawing now
+  switches editing on, and stopping (the button, another map tool, or closing
+  the dialog) saves and switches it off, so QGIS does not ask to save the
+  layer later. An edit session you started yourself is left open.
+- The tests now click on the map canvas. Before they handed the plugin a
+  finished polygon, which is why they never saw this.
+
 ## 1.9.0
 
 - **New rim rule: slope break.** *Detect rim* can now put the rim where the
