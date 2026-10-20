@@ -88,6 +88,7 @@ class HypsometricDialog(QDialog):
         self._plot_path = None
         self._draw_tool = None
         self._drawn_layer = None
+        self._editing_started = False
         self._rim_fits = {}
         self._flagged_rims = []
         self._crs_report = None
@@ -567,6 +568,13 @@ class HypsometricDialog(QDialog):
         cad_getter = getattr(self.iface, "cadDockWidget", None)
         cad_widget = cad_getter() if callable(cad_getter) else None
 
+        # The digitizing tool ignores clicks on a layer that is not in edit
+        # mode, so switch editing on rather than leave the user to find
+        # Toggle Editing. A layer the user already had in edit mode is theirs:
+        # only editing started here is stopped again when drawing stops.
+        if not layer.isEditable():
+            self._editing_started = layer.startEditing()
+
         self._draw_tool = QgsMapToolDigitizeFeature(canvas, cad_widget, mode)
         self._draw_tool.setLayer(layer)
         self._draw_tool.digitizingCompleted.connect(self._on_polygon_digitized)
@@ -592,9 +600,28 @@ class HypsometricDialog(QDialog):
             canvas = self._map_canvas()
             if canvas is not None and canvas.mapTool() is tool:
                 canvas.unsetMapTool(tool)
+        self._stop_editing()
         self.draw_btn.setText("Draw polygon")
         if self.draw_btn.isChecked():
             self.draw_btn.setChecked(False)
+
+    def _stop_editing(self):
+        """
+        End the edit session drawing started, keeping anything changed in it.
+
+        Polygons are written straight to the layer as they are drawn, so this
+        only saves edits made with QGIS's own tools in the meantime. Leaving
+        the session open would have QGIS ask to save the layer later.
+        """
+        started, self._editing_started = self._editing_started, False
+        layer = self._drawn_layer
+        if (not started or layer is None
+                or QgsProject.instance().mapLayer(layer.id()) is None
+                or not layer.isEditable()):
+            return
+        if not layer.commitChanges():
+            self._log("Could not save edits to the drawn layer: "
+                      + "; ".join(layer.commitErrors()))
 
     def _on_map_tool_set(self, new_tool, _old_tool=None):
         """Untoggle the button when QGIS switches to a different map tool."""

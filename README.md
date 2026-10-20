@@ -133,6 +133,10 @@ like — each one becomes a feature and gets its own curve — then click **Stop
 drawing** and run the analysis. The button untoggles itself if you switch to
 another QGIS map tool.
 
+There is no need for *Toggle Editing*: drawing puts the layer in edit mode and
+stopping takes it out again, saving any changes. If you had already switched
+editing on yourself, it is left on.
+
 The layer is an in-memory scratch layer, so nothing is written to disk. To keep
 it, use *Layer ▸ Make Permanent* or export it as a shapefile / GeoPackage like
 any other layer. It is drawn in the project CRS; the algorithm reprojects it to
